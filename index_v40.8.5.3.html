@@ -12,6 +12,8 @@
         :root {
             --bg: #f8f9fa; --card: #fff; --border: #e0e0e0;
             --text: #1a1a1a; --text2: #555; --muted: #999;
+            --bg-primary: #fff; --bg-secondary: #f5f6f8;
+            --text-primary: #1a1a1a; --text-secondary: #555;
             --green: #00c875; --green-lt: #e6f9f1;
             --yellow: #fdab3d; --yellow-lt: #fff4e5;
             --red: #e2445c; --red-lt: #ffe5e9;
@@ -643,7 +645,7 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
         
 <!-- Client Edit Modal -->
 <div id="client-edit-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;display:none;align-items:center;justify-content:center">
-<div style="background:var(--bg-primary);border-radius:12px;padding:24px;width:90%;max-width:600px;max-height:90vh;overflow-y:auto;margin:auto;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)">
+<div style="background:#fff;border-radius:12px;padding:24px;width:90%;max-width:600px;max-height:90vh;overflow-y:auto;margin:auto;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><h3 id="client-modal-title">Edit Client</h3><button onclick="closeClientModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-primary)">×</button></div>
 <div class="form-group"><label class="form-label">Company Name *</label><input class="form-input" id="ce-company" placeholder="Company name"></div>
 <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="ce-email" type="email" placeholder="Email"></div>
@@ -837,6 +839,26 @@ let currentMonth = new Date(), currentScan = null, currentProject = null, pendin
 let pendingPhotoUploads = [], punchlistFilter = {project: null, type: null, status: null};
 let projectToDelete = null;
 let currentUserId = null;
+let pmAccess = { enabled: false, email: null, clientIds: [], projectIds: [] };
+
+function recomputePMAccess() {
+    const email = (_currentUser && _currentUser.email ? _currentUser.email.toLowerCase() : '');
+    const role = (_currentUser && _currentUser.role ? String(_currentUser.role).toLowerCase() : '');
+    if (!email || role === 'admin') { pmAccess = { enabled:false, email:null, clientIds:[], projectIds:[] }; return; }
+    const clientIds = clients.filter(c => getClientPMs(c).some(pm => (pm.email || '').toLowerCase() === email)).map(c => c.id);
+    if (!clientIds.length) { pmAccess = { enabled:false, email:null, clientIds:[], projectIds:[] }; return; }
+    const projectIds = projects.filter(p => clientIds.includes(p.clientId)).map(p => p.id);
+    pmAccess = { enabled: true, email, clientIds, projectIds };
+}
+
+function getVisibleProjects() {
+    return pmAccess.enabled ? projects.filter(p => pmAccess.projectIds.includes(p.id)) : projects;
+}
+
+function getVisibleShipments() {
+    if (!pmAccess.enabled) return shipments;
+    return shipments.filter(s => (s.projectId && pmAccess.projectIds.includes(s.projectId)) || (!s.projectId && pmAccess.clientIds.includes(s.clientId)));
+}
 
 const sampleClients = [{id:1,company:'Red Thread',email:'client@redthread.com'},{id:2,company:'Service Champions',email:'client@sc.com'},{id:3,company:'Kayne',email:'client@kayne.com'}];
 const samplePeople = [{id:1,name:'Carlos Martinez',role:'Lead Installer',phone:'(714) 555-0101',email:'carlos@vector.com'},{id:2,name:'James Wilson',role:'Installer',phone:'(714) 555-0102',email:'james@vector.com'},{id:3,name:'Mike Johnson',role:'Driver',phone:'(714) 555-0103',email:'mike@vector.com'}];
@@ -946,6 +968,8 @@ async function load() {
         }
     }
 
+    // Recompute PM access after data load
+    recomputePMAccess();
     // Cache to localStorage
     await loadCamScannerDocs();
     saveLocal();
@@ -1024,7 +1048,8 @@ function renderScans() {
 }
 
 function renderShipments() {
-    const groups = {}; shipments.forEach(s => { if (!groups[s.po]) groups[s.po] = []; groups[s.po].push(s); });
+    const visibleShipments = getVisibleShipments();
+    const groups = {}; visibleShipments.forEach(s => { if (!groups[s.po]) groups[s.po] = []; groups[s.po].push(s); });
     let h = '';
     Object.keys(groups).forEach(po => {
         const items = groups[po], isOpen = openPOs[po];
@@ -1137,8 +1162,10 @@ function renderCamScanInbox() {
         const edit = ensureCamEditDefaults(sc);
         const clientId = edit.clientId || '';
         const projectId = edit.projectId || '';
-        const clientsOpts = '<option value="">Select...</option>' + clients.map(c => `<option value="${c.id}" ${clientId==c.id?'selected':''}>${c.company}</option>`).join('');
-        const projList = clientId ? projects.filter(p => p.clientId == clientId) : projects;
+        const visibleClients = pmAccess.enabled ? clients.filter(c => pmAccess.clientIds.includes(c.id)) : clients;
+        const visibleProjects = getVisibleProjects();
+        const clientsOpts = '<option value="">Select...</option>' + visibleClients.map(c => `<option value="${c.id}" ${clientId==c.id?'selected':''}>${escapeHtml(c.company)}</option>`).join('');
+        const projList = clientId ? visibleProjects.filter(p => p.clientId == clientId) : visibleProjects;
         const projectOpts = '<option value="">Select...</option><option value="_unknown"' + (projectId==='_unknown'?' selected':'') + '>🚩 Unknown</option>' + projList.map(p => `<option value="${p.id}" ${projectId==p.id?'selected':''}>${p.name}</option>`).join('');
         const client = clients.find(c => c.id == clientId);
         const pms = client ? getClientPMs(client) : [];
@@ -1556,10 +1583,11 @@ function renderCalendar() {
     let h = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => `<div class="calendar-day-header">${d}</div>`).join('');
     const prev = new Date(y, m, 0);
     for (let i = start - 1; i >= 0; i--) h += `<div class="calendar-day other"><div class="day-num">${prev.getDate() - i}</div></div>`;
+    const visibleProjects = getVisibleProjects();
     for (let d = 1; d <= total; d++) {
         const ds = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-        const dp = projects.filter(p => p.date === ds);
-        h += `<div class="calendar-day ${ds === today ? 'today' : ''}"><div class="day-num">${d}</div>${dp.map(p => `<div class="calendar-event ${p.team?.length ? '' : 'no-team'}" onclick="openPanel(${p.id})">${p.name}</div>`).join('')}</div>`;
+        const dp = visibleProjects.filter(p => p.date === ds);
+        h += `<div class="calendar-day ${ds === today ? 'today' : ''}"><div class="day-num">${d}</div>${dp.map(p => `<div class="calendar-event ${p.team?.length ? '' : 'no-team'}" onclick="openPanel(${p.id})">${escapeHtml(p.name)}</div>`).join('')}</div>`;
     }
     const rem = 42 - (start + total);
     for (let d = 1; d <= rem; d++) h += `<div class="calendar-day other"><div class="day-num">${d}</div></div>`;
@@ -2590,7 +2618,7 @@ async function confirmDeleteProject() {
     toast('Project deleted');
 }
 
-function renderProjects() { $('#projects-list').innerHTML = projects.map(p => { const c = clients.find(x => x.id === p.clientId); const ps = shipments.filter(s => s.projectId === p.id); const rec = ps.filter(s => s.status === 'received').length; const isCompleted = p.status === 'completed'; return `<div class="card" onclick="openPanel(${p.id})" style="${isCompleted ? 'opacity:0.6;border-color:var(--gray)' : ''}"><div class="card-header"><div class="card-avatar" style="background:${isCompleted ? 'var(--gray-lt)' : 'var(--green-lt)'};color:${isCompleted ? 'var(--muted)' : 'var(--green)'}">${isCompleted ? '✓' : '📁'}</div><div><div class="card-title">${escapeHtml(p.name)}${isCompleted ? ' <span style="font-size:12px;background:var(--gray-lt);color:var(--muted);padding:2px 8px;border-radius:4px;margin-left:8px">Completed</span>' : ''}</div><div class="card-subtitle">${escapeHtml(c?.company || '')}</div></div></div><div class="card-stats"><span><strong>${rec}/${ps.length}</strong> received</span><span><strong>${p.team?.length || 0}</strong> assigned</span></div></div>`; }).join(''); }
+function renderProjects() { const visible = getVisibleProjects(); $('#projects-list').innerHTML = visible.map(p => { const c = clients.find(x => x.id === p.clientId); const ps = shipments.filter(s => s.projectId === p.id); const rec = ps.filter(s => s.status === 'received').length; const isCompleted = p.status === 'completed'; return `<div class="card" onclick="openPanel(${p.id})" style="${isCompleted ? 'opacity:0.6;border-color:var(--gray)' : ''}"><div class="card-header"><div class="card-avatar" style="background:${isCompleted ? 'var(--gray-lt)' : 'var(--green-lt)'};color:${isCompleted ? 'var(--muted)' : 'var(--green)'}">${isCompleted ? '✓' : '📁'}</div><div><div class="card-title">${escapeHtml(p.name)}${isCompleted ? ' <span style="font-size:12px;background:var(--gray-lt);color:var(--muted);padding:2px 8px;border-radius:4px;margin-left:8px">Completed</span>' : ''}</div><div class="card-subtitle">${escapeHtml(c?.company || '')}</div></div></div><div class="card-stats"><span><strong>${rec}/${ps.length}</strong> received</span><span><strong>${p.team?.length || 0}</strong> assigned</span></div></div>`; }).join(''); }
 function renderPeople() { $('#people-list').innerHTML = people.map(p => `<div class="card" style="cursor:default"><div class="card-header"><div class="card-avatar">${escapeHtml((p.name||'').split(' ').map(n=>n[0]).join(''))}</div><div><div class="card-title">${escapeHtml(p.name)}</div><div class="card-subtitle">${escapeHtml(p.role)}</div></div></div><div class="card-stats"><span>${escapeHtml(p.phone || '')}</span></div></div>`).join(''); }
 function renderClients() {
     var list = $('#clients-list');
@@ -2607,11 +2635,13 @@ function renderClients() {
   }
 
 function populateSelects() {
-    const o = '<option value="">Select...</option>' + clients.map(c => `<option value="${c.id}">${c.company}</option>`).join('');
+    const visibleClients = pmAccess.enabled ? clients.filter(c => pmAccess.clientIds.includes(c.id)) : clients;
+    const visibleProjects = getVisibleProjects();
+    const o = '<option value="">Select...</option>' + visibleClients.map(c => `<option value="${c.id}">${escapeHtml(c.company)}</option>`).join('');
     $('#f-client').innerHTML = o;
     $('#p-client').innerHTML = o;
 
-    const projOptions = '<option value="">Select...</option>' + projects.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+    const projOptions = '<option value="">Select...</option>' + visibleProjects.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
     $('#pi-project').innerHTML = projOptions;
 
     const peopleOptions = '<option value="">Select...</option>' + people.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
@@ -2640,6 +2670,7 @@ async function saveProject() {
     if (newId) {
         projects.push({ id: newId, name: n, clientId: c, date: data.install_date, time: data.install_time, location: data.location, team: [], docs: {} });
     }
+    recomputePMAccess();
     saveLocal();
     render();
     closeModal('project');
@@ -3673,6 +3704,8 @@ async function handleAuthSession(session) {
             }
         }
         
+        // Refresh PM access and UI after auth
+        try { if (typeof recomputePMAccess === 'function') { recomputePMAccess(); if (typeof render === 'function') render(); } } catch(e) {}
         // Hide overlay and let the CRM load
         hideLoginScreen();
         
@@ -3841,6 +3874,7 @@ function closeClientModal() {
                     await sbUpdate('clients', editingClientId, updates);
                     Object.assign(c, updates);
                 }
+                recomputePMAccess();
                 renderClients();
                 closeClientModal();
             } catch(e) {
