@@ -718,7 +718,8 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
 <script>
 // Supabase Configuration
 const SUPABASE_URL = 'https://ilbrtyoeqrbkbbotoopu.supabase.co';
-    let camScans = [], camScansLoaded = false;
+let camScans = [], camScansLoaded = false;
+let scanInbox = [];
     let camScanEdits = {}, camScanProcessed = {};
     let scanTargetShipmentId = null;
     let _authAccessToken = null;
@@ -879,8 +880,12 @@ const samplePunchlist = [
     {id:3,projectId:3,type:'backorder',description:'Credenza top in walnut',manufacturer:'Deskmakers',po:'11456-01-RS Deskmakers',quantity:1,status:'resolved',reportedById:3,dateReported:'2025-02-04',photos:[],notes:'Ordered and scheduled for delivery 2/15'}
 ];
 
-document.addEventListener('DOMContentLoaded', async () => { loadCamScanState(); await load(); render();
-    loadCamScannerDocs(); });
+document.addEventListener('DOMContentLoaded', async () => {
+    loadCamScanState();
+    await load();
+    render();
+    loadCamScannerDocs();
+});
 
 async function load() {
     // Try to load from Supabase first
@@ -968,6 +973,8 @@ async function load() {
         }
     }
 
+    // Load Outlook scan inbox (Supabase)
+    await loadScanInbox();
     // Recompute PM access after data load
     recomputePMAccess();
     // Cache to localStorage
@@ -1020,6 +1027,10 @@ function loadCamScanState() {
 function saveCamScanState() {
     localStorage.setItem('v10_camScanEdits', JSON.stringify(camScanEdits || {}));
     localStorage.setItem('v10_camScanProcessed', JSON.stringify(camScanProcessed || {}));
+}
+async function loadScanInbox() {
+    const rows = await sbFetch('scan_inbox', 'GET', '?order=created_at.desc');
+    scanInbox = rows || [];
 }
 function render() { renderScans(); renderShipments(); renderCamScanInbox(); renderCalendar(); renderProjects(); renderPeople(); renderClients(); renderPunchlist(); renderDispatches(); renderLoadingSheet(); populateSelects(); updateBadges(); renderSettings(); }
 function updateBadges() { const p = scans.filter(s => s.status === 'pending').length; $('#nav-scans-badge').textContent = p; $('#nav-scans-badge').style.display = p > 0 ? 'inline' : 'none'; }
@@ -1093,13 +1104,19 @@ function updateCamPMs(id, el) {
 }
 
 function dismissCamScan(id) {
+    const inboxRow = (scanInbox || []).find(x => String(x.id) === String(id));
+    if (inboxRow) {
+        sbUpdate('scan_inbox', inboxRow.id, { status: 'ignored' });
+        scanInbox = scanInbox.map(r => r.id === inboxRow.id ? { ...r, status: 'ignored' } : r);
+    }
     camScanProcessed[id] = { ignored: true, processedAt: new Date().toISOString() };
     saveCamScanState();
     renderCamScanInbox();
 }
 
 async function processCamScan(id) {
-    const sc = (camScans || []).find(x => x.id === id);
+    const inboxRow = (scanInbox || []).find(x => String(x.id) === String(id));
+    const sc = inboxRow || (camScans || []).find(x => x.id === id);
     if (!sc) return;
     const edit = camScanEdits[id] || {};
     const po = (edit.po || '').trim();
@@ -1138,6 +1155,10 @@ async function processCamScan(id) {
         });
     }
 
+    if (inboxRow) {
+        await sbUpdate('scan_inbox', inboxRow.id, { status: 'processed', processed_at: new Date().toISOString(), shipment_id: newShipmentId || null });
+        scanInbox = scanInbox.map(r => r.id === inboxRow.id ? { ...r, status: 'processed' } : r);
+    }
     camScanProcessed[id] = { processedAt: new Date().toISOString(), shipmentId: newShipmentId || null };
     saveCamScanState();
     renderShipments();
@@ -1149,7 +1170,10 @@ async function processCamScan(id) {
 function renderCamScanInbox() {
     const el = document.getElementById('cam-inbox');
     if (!el) return;
-    const pending = (camScans || []).filter(sc => !camScanProcessed[sc.id]);
+    const useInbox = (scanInbox || []).length > 0;
+    const pending = useInbox
+        ? (scanInbox || []).filter(sc => sc.status !== 'processed' && sc.status !== 'ignored')
+        : (camScans || []).filter(sc => !camScanProcessed[sc.id]);
     if (!pending.length) { el.innerHTML = ''; return; }
 
     let html = '<div class="cs-inbox">';
@@ -1166,16 +1190,18 @@ function renderCamScanInbox() {
         const visibleProjects = getVisibleProjects();
         const clientsOpts = '<option value="">Select...</option>' + visibleClients.map(c => `<option value="${c.id}" ${clientId==c.id?'selected':''}>${escapeHtml(c.company)}</option>`).join('');
         const projList = clientId ? visibleProjects.filter(p => p.clientId == clientId) : visibleProjects;
-        const projectOpts = '<option value="">Select...</option><option value="_unknown"' + (projectId==='_unknown'?' selected':'') + '>🚩 Unknown</option>' + projList.map(p => `<option value="${p.id}" ${projectId==p.id?'selected':''}>${p.name}</option>`).join('');
+        const projectOpts = '<option value="">Select...</option><option value="_unknown"' + (projectId==='_unknown'?' selected':'') + '>🚩 Unknown</option>' + projList.map(p => `<option value="${p.id}" ${projectId==p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('');
         const client = clients.find(c => c.id == clientId);
         const pms = client ? getClientPMs(client) : [];
         const pmEmails = Array.isArray(edit.pmEmails) ? edit.pmEmails : [];
         const pmOptions = pms.map(pm => `<option value="${pm.email||''}" data-email="${pm.email||''}" ${pmEmails.includes(pm.email)?'selected':''}>${pm.email ? (pm.name + ' — ' + pm.email) : pm.name}</option>`).join('');
+        const docName = sc.filename || sc.email_subject || sc.po || 'Scan';
+        const pdfUrl = sc.file_url || sc.pdf_url || '';
 
         html += '<tr>';
-        html += '<td>' + (sc.filename || sc.po || 'CamScanner Doc') + '</td>';
+        html += '<td>' + escapeHtml(docName) + '</td>';
         html += `<td><input value="${edit.po || ''}" onchange="updateCamEdit('${sc.id}','po',this.value)"></td>`;
-        html += `<td>${sc.pdf_url ? '<a href="'+sc.pdf_url+'" target="_blank" style="color:var(--blue)">View PDF</a>' : ''}</td>`;
+        html += `<td>${pdfUrl ? '<a href="'+pdfUrl+'" target="_blank" style="color:var(--blue)">View PDF</a>' : ''}</td>`;
         html += `<td><select onchange="updateCamClient('${sc.id}',this.value)">${clientsOpts}</select></td>`;
         html += `<td><select onchange="updateCamProject('${sc.id}',this.value)">${projectOpts}</select></td>`;
         html += `<td><select multiple size="2" onchange="updateCamPMs('${sc.id}',this)">${pmOptions}</select></td>`;
