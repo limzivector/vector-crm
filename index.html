@@ -86,6 +86,8 @@
         .scans-header > div:last-child, .scans-row > div:last-child { border-right: none; }
         .scans-row { border-bottom: 1px solid var(--border); cursor: pointer; }
         .scans-row:hover { background: #fafbfc; }
+        .pm-checklist { display: grid; gap: 6px; margin-top: 4px; }
+        .pm-check { display: flex; align-items: center; gap: 8px; font-size: 12px; background: var(--gray-lt); padding: 6px 8px; border-radius: 6px; }
         .scan-indicator { width: 24px; height: 24px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 12px; }
         .scan-indicator.pending { background: var(--yellow-lt); }
         .scan-indicator.done { background: var(--green-lt); }
@@ -695,7 +697,7 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
                 <div class="form-group"><label class="form-label">Is this a Return Product?</label><select class="form-select" id="f-return"><option value="no">No</option><option value="yes">Yes</option></select></div>
                 <div class="form-group"><label class="form-label">Client Name <span class="req">*</span></label><select class="form-select" id="f-client" onchange="onClientChange()"><option value="">Select...</option></select><div class="inline-add hidden" id="inline-client"><input type="text" class="form-input" id="il-client" placeholder="Company"><button class="btn btn-primary" onclick="addInlineClient()">Add</button></div><div class="form-hint"><a href="#" onclick="toggleInline('client');return false">+ Add new</a></div></div>
                 <div class="form-group"><label class="form-label">Project Name <span class="req">*</span></label><select class="form-select" id="f-project"><option value="">Select...</option><option value="_unknown">🚩 Unknown</option></select><div class="inline-add hidden" id="inline-project"><input type="text" class="form-input" id="il-project" placeholder="Project"><button class="btn btn-primary" onclick="addInlineProject()">Add</button></div><div class="form-hint"><a href="#" onclick="toggleInline('project');return false">+ Add new</a></div></div>
-                <div class="form-group"><label class="form-label">Project Managers (CC)</label><select class="form-select" id="f-pm" multiple size="3"></select><div class="form-hint">Select one or more PMs to CC</div></div>
+                <div class="form-group"><label class="form-label">Project Managers (CC)</label><div id="f-pm-list" class="pm-checklist"></div><div class="form-hint">Select one or more PMs to CC</div></div>
                 <div class="form-group"><label class="form-label">Manufacturer</label><input type="text" class="form-input" id="f-mfr"></div>
                 <div class="form-group"><label class="form-label">Cartons/Pallets</label><input type="text" class="form-input" id="f-cartons"></div>
                 <div class="form-group"><label class="form-label">Warehouse Location</label><select class="form-select" id="f-location" onchange="onFormLocationChange(this)"></select></div>
@@ -1051,7 +1053,7 @@ function renderScans() {
   var inboxScans = (scanInbox || []).map(function(sc) {
     return {
       id: sc.id,
-      filename: sc.filename || sc.email_subject || sc.po || "Scan",
+      filename: sc.filename || sc.title || sc.email_subject || sc.po || "Scan",
       timestamp: sc.received_at || sc.created_at || sc.timestamp || new Date().toISOString(),
       status: sc.status || "pending",
       source: sc.source || "onedrive",
@@ -1078,7 +1080,8 @@ function renderScans() {
     var actions = pdfUrl ? '<a href="' + pdfUrl + '" target="_blank" onclick="event.stopPropagation()" style="color:var(--blue)">View PDF</a>' : "";
     var safeId = String(sc.id).replace(/'/g, "\\'");
     var source = sc.source || "local";
-    html += '<div class="scans-row" onclick="openRawScanForm(\'' + safeId + '\',\'' + source + '\')">' +
+    var clickSource = source === "onedrive" ? "inbox" : source;
+    html += '<div class="scans-row" onclick="openRawScanForm(\'' + safeId + '\',\'' + clickSource + '\')">' +
       '<div><div class="scan-indicator ' + statusClass + '">' + (statusClass === "pending" ? "…" : "✓") + '</div></div>' +
       '<div>' + escapeHtml(sc.filename || sc.po || "Untitled") + '</div>' +
       '<div><span style="background:' + sourceColor + ';color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">' + sourceLabel + '</span></div>' +
@@ -1196,7 +1199,17 @@ async function processCamScan(id) {
     saveCamScanState();
     renderShipments();
     renderCamScanInbox();
-    try { sendReceivingEmailMulti(clientId, edit.pmEmails || [], po, projectId || null); } catch(e) {}
+    try {
+        var details = {
+            manufacturer: edit.manufacturer || '',
+            cartons: edit.cartons || '',
+            location: edit.location || '',
+            receivedDate: edit.receivedDate || '',
+            status: 'received',
+            pdfUrl: (sc.file_url || sc.pdf_url || '')
+        };
+        sendReceivingEmailMulti(clientId, edit.pmEmails || [], po, projectId || null, details);
+    } catch(e) {}
     toast('CamScanner entry processed');
 }
 
@@ -1229,7 +1242,7 @@ function renderCamScanInbox() {
         const pms = client ? getClientPMs(client) : [];
         const pmEmails = Array.isArray(edit.pmEmails) ? edit.pmEmails : [];
         const pmOptions = pms.map(pm => `<option value="${pm.email||''}" data-email="${pm.email||''}" ${pmEmails.includes(pm.email)?'selected':''}>${pm.email ? (pm.name + ' — ' + pm.email) : pm.name}</option>`).join('');
-        const docName = sc.filename || sc.email_subject || sc.po || 'Scan';
+        const docName = sc.filename || sc.title || sc.email_subject || sc.po || 'Scan';
         const pdfUrl = sc.file_url || sc.pdf_url || '';
         const locOpts = buildLocationOptions(edit.location || '');
 
@@ -1550,7 +1563,7 @@ function openRawScanForm(id, source) {
     currentScan = null;
 
     var sc = null;
-    if (src === 'inbox') {
+    if (src === 'inbox' || src === 'onedrive') {
         sc = (scanInbox || []).find(function(x){ return String(x.id) === String(id); });
     } else if (src === 'camscanner') {
         sc = (camScans || []).find(function(x){ return String(x.id) === String(id); });
@@ -1562,7 +1575,7 @@ function openRawScanForm(id, source) {
     if (isCam) currentCamScanId = sc.id;
 
     var pdfUrl = sc.pdf_url || sc.file_url || '';
-    var title = sc.filename || sc.email_subject || sc.po || 'Scan';
+    var title = sc.filename || sc.title || sc.email_subject || sc.po || 'Scan';
     $('#scan-filename').innerHTML = pdfUrl ? '<a href="'+pdfUrl+'" target="_blank" style="color:var(--accent)">' + escapeHtml(title) + ' 📄</a>' : escapeHtml(title);
     var ts = sc.timestamp || sc.received_at || sc.created_at || new Date().toISOString();
     $('#scan-time').textContent = new Date(ts).toLocaleString();
@@ -1586,7 +1599,7 @@ function openRawScanForm(id, source) {
     $('#f-client').value = edit.clientId || '';
     onClientChange();
     $('#f-project').value = edit.projectId || '';
-    loadReceivingPMDropdown(edit.clientId ? parseInt(edit.clientId) : null, edit.pmEmails || []);
+    renderPMCheckboxes(edit.clientId ? parseInt(edit.clientId) : null, edit.pmEmails || []);
     $('#f-mfr').value = edit.manufacturer || '';
     $('#f-cartons').value = edit.cartons || '';
     $('#f-date').value = edit.receivedDate || new Date().toISOString().split('T')[0];
@@ -1601,32 +1614,40 @@ function openRawScanForm(id, source) {
     openModal('scan');
 }
 
-function loadReceivingPMDropdown(clientId, selectedEmails) {
-    var sel = $('#f-pm');
-    if (!sel) return;
-    sel.innerHTML = '';
+function renderPMCheckboxes(clientId, selectedEmails) {
+    var wrap = document.getElementById('f-pm-list');
+    if (!wrap) return;
+    if (!clientId) {
+        wrap.innerHTML = '<div style="color:var(--text2);font-size:12px">Select a client to see PMs</div>';
+        return;
+    }
     var client = clients.find(function(c) { return c.id === clientId; });
     var pms = client ? getClientPMs(client) : [];
-    pms.forEach(function(pm) {
-        var opt = document.createElement('option');
-        opt.value = pm.email || pm.name || '';
-        opt.textContent = pm.email ? (pm.name + ' — ' + pm.email) : (pm.name || '');
-        opt.dataset.email = pm.email || '';
-        if (Array.isArray(selectedEmails) && pm.email && selectedEmails.includes(pm.email)) opt.selected = true;
-        sel.appendChild(opt);
-    });
+    if (!pms.length) {
+        wrap.innerHTML = '<div style="color:var(--text2);font-size:12px">No PMs for this client</div>';
+        return;
+    }
+    wrap.innerHTML = pms.map(function(pm, idx) {
+        var email = pm.email || '';
+        var name = pm.name || email || ('PM ' + (idx + 1));
+        var checked = Array.isArray(selectedEmails) && email && selectedEmails.includes(email);
+        return '<label class="pm-check">' +
+            '<input type="checkbox" data-email="' + escapeHtml(email) + '"' + (checked ? ' checked' : '') + '>' +
+            '<span>' + escapeHtml(name) + (email ? ' — ' + escapeHtml(email) : '') + '</span>' +
+            '</label>';
+    }).join('');
 }
 
 function onClientChange() {
     const c = +$('#f-client').value;
     const p = c ? projects.filter(x => x.clientId === c) : projects;
     $('#f-project').innerHTML = '<option value="">Select...</option><option value="_unknown">🚩 Unknown</option>' + p.map(x => `<option value="${x.id}">${x.name}</option>`).join('');
-    if (c) loadReceivingPMDropdown(c, []);
+    renderPMCheckboxes(c || null, []);
 }
 
 async function submitScan() {
     const po = $('#f-po').value.trim(), cid = +$('#f-client').value, pid = $('#f-project').value;
-    const pmEmails = $('#f-pm') ? Array.from($('#f-pm').selectedOptions || []).map(o => o.dataset.email || o.value).filter(Boolean) : [];
+    const pmEmails = Array.from(document.querySelectorAll('#f-pm-list input[type=checkbox]:checked')).map(el => el.dataset.email).filter(Boolean);
     if (!po) return toast('Enter PO #');
     if (!cid) return toast('Select client');
     if (!pid) return toast('Select project');
@@ -1687,7 +1708,17 @@ async function submitScan() {
     render();
     closeModal('scan');
     toast('Shipment added!');
-    try { sendReceivingEmailMulti(cid, pmEmails, po, pid === '_unknown' ? null : +pid); } catch(e) {}
+    try {
+        var details = {
+            manufacturer: $('#f-mfr').value.trim(),
+            cartons: $('#f-cartons').value.trim(),
+            location: $('#f-location').value || '',
+            receivedDate: $('#f-date').value || '',
+            status: $('#f-status').value,
+            pdfUrl: (currentScan && currentScan.pdf_url) ? currentScan.pdf_url : ''
+        };
+        sendReceivingEmailMulti(cid, pmEmails, po, pid === '_unknown' ? null : +pid, details);
+    } catch(e) {}
     switchTab('shipments', $$('.header-tab')[1]);
 }
 
@@ -4050,7 +4081,7 @@ function closeClientModal() {
 
 function getProjectEmailRecipients(projectId) { var proj = projects.find(function(p) { return p.id === projectId; }); if (!proj) return {to:"", cc:[]}; var client = clients.find(function(c) { return c.id === proj.clientId; }); if (!client) return {to:"", cc:[]}; var pms = typeof getClientPMs === "function" ? getClientPMs(client) : []; var to = client.email || ""; var cc = []; if (proj.project_manager) { var pm = pms.find(function(x) { return (x.name || x) === proj.project_manager; }); if (pm && pm.email) cc = [pm.email]; } else { cc = pms.map(function(pm){return pm.email}).filter(Boolean); } return {to:to, cc:cc}; }
 function emailClient(projectId) { var rec = getProjectEmailRecipients(projectId); if (!rec.to) return toast("No client email on file"); var subject = "Project Update"; var ccStr = rec.cc.join(";"); window.open("mailto:" + encodeURIComponent(rec.to) + "?cc=" + encodeURIComponent(ccStr) + "&subject=" + encodeURIComponent(subject), "_blank"); }
-function sendReceivingEmail(clientId, pmName, po, projectId) {
+function sendReceivingEmail(clientId, pmName, po, projectId, details) {
   var client = clients.find(function(c) { return c.id === clientId; });
   if (!client || !client.email) return;
   var pms = typeof getClientPMs === "function" ? getClientPMs(client) : [];
@@ -4058,25 +4089,38 @@ function sendReceivingEmail(clientId, pmName, po, projectId) {
   var cc = pm && pm.email ? pm.email : "";
   var proj = projectId ? projects.find(function(p){ return p.id === projectId; }) : null;
   var subject = "Receiving: " + (po || "");
-  var body = "PO: " + (po || "") + (proj ? "\\nProject: " + proj.name : "");
+  var body = buildReceivingEmailBody(po, proj, details);
   var url = "mailto:" + encodeURIComponent(client.email) +
     (cc ? ("?cc=" + encodeURIComponent(cc)) : "?cc=") +
     "&subject=" + encodeURIComponent(subject) +
     "&body=" + encodeURIComponent(body);
   window.open(url, "_blank");
 }
-function sendReceivingEmailMulti(clientId, pmEmails, po, projectId) {
+function sendReceivingEmailMulti(clientId, pmEmails, po, projectId, details) {
   var client = clients.find(function(c) { return c.id === clientId; });
   if (!client || !client.email) return;
   var proj = projectId ? projects.find(function(p){ return p.id === projectId; }) : null;
   var subject = "Receiving: " + (po || "");
-  var body = "PO: " + (po || "") + (proj ? "\\nProject: " + proj.name : "");
+  var body = buildReceivingEmailBody(po, proj, details);
   var ccStr = (pmEmails || []).filter(Boolean).join(";");
   var url = "mailto:" + encodeURIComponent(client.email) +
     "?cc=" + encodeURIComponent(ccStr) +
     "&subject=" + encodeURIComponent(subject) +
     "&body=" + encodeURIComponent(body);
   window.open(url, "_blank");
+}
+function buildReceivingEmailBody(po, proj, details) {
+  var d = details || {};
+  var lines = [];
+  lines.push("PO: " + (po || ""));
+  if (proj) lines.push("Project: " + proj.name);
+  if (d.manufacturer) lines.push("Manufacturer: " + d.manufacturer);
+  if (d.cartons) lines.push("Cartons/Pallets: " + d.cartons);
+  if (d.location) lines.push("Location: " + d.location);
+  if (d.receivedDate) lines.push("Received Date: " + d.receivedDate);
+  if (d.status) lines.push("Status: " + d.status);
+  if (d.pdfUrl) lines.push("PDF: " + d.pdfUrl);
+  return lines.join("\\n");
 }
 function getCamScanForShipment(s) {
   return (camScans || []).find(function(sc) { return sc.po === s.subitem || sc.po === s.po; });
