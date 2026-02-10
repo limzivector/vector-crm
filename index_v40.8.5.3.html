@@ -726,15 +726,28 @@ let camScans = [], camScansLoaded = false;
 let scanInbox = [];
     let camScanEdits = {}, camScanProcessed = {};
     let scanTargetShipmentId = null;
-    let _authAccessToken = null;
-    // Synchronously read auth token from localStorage for immediate use
+let _authAccessToken = null;
+// Synchronously read auth token from localStorage for immediate use
     try {
       var _storedSession = localStorage.getItem('sb-ilbrtyoeqrbkbbotoopu-auth-token');
       if (_storedSession) {
         var _parsed = JSON.parse(_storedSession);
         if (_parsed && _parsed.access_token) {
-          _authAccessToken = _parsed.access_token;
-          console.log('[AUTH] Token loaded from localStorage');
+          // Avoid using an already-expired access token
+          try {
+            const parts = _parsed.access_token.split('.');
+            const payload = parts[1] ? JSON.parse(atob(parts[1])) : null;
+            const expMs = payload && payload.exp ? payload.exp * 1000 : 0;
+            if (expMs && (Date.now() < (expMs - 30000))) {
+              _authAccessToken = _parsed.access_token;
+              console.log('[AUTH] Token loaded from localStorage');
+            } else {
+              console.warn('[AUTH] Stored access token expired, will refresh');
+            }
+          } catch(e) {
+            _authAccessToken = _parsed.access_token;
+            console.log('[AUTH] Token loaded from localStorage (no exp check)');
+          }
         }
       }
     } catch(_e) { console.log('[AUTH] No stored session'); }
@@ -748,6 +761,10 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 let sbLastError = null;
 async function sbFetch(table, method = 'GET', query = '', data = null, headers = {}) {
     const url = `${SUPABASE_URL}/rest/v1/${table}${query}`;
+    // If we have a stored session but no active access token, try restore/refresh first
+    if (!_authAccessToken && getStoredAuth()) {
+        await restoreSessionIfPossible();
+    }
     const options = {
         method,
         headers: {
@@ -760,10 +777,24 @@ async function sbFetch(table, method = 'GET', query = '', data = null, headers =
     if (data) options.body = JSON.stringify(data);
 
     try {
-        const response = await fetch(url, options);
+        let response = await fetch(url, options);
         if (!response.ok) {
             const bodyText = await response.text().catch(() => '');
             sbLastError = { table, method, status: response.status, body: bodyText };
+            // Auto-recover on expired JWT
+            if (response.status === 401 && /JWT expired|invalid|PGRST301/i.test(bodyText || '')) {
+                console.warn('[AUTH] JWT expired — refreshing session and retrying');
+                await tryRefreshSession();
+                const retryOptions = {
+                    ...options,
+                    headers: {
+                        ...options.headers,
+                        'Authorization': `Bearer ${_authAccessToken || SUPABASE_KEY}`
+                    }
+                };
+                response = await fetch(url, retryOptions);
+                if (response.ok) return await response.json();
+            }
             console.warn(`Supabase ${method} ${table} failed:`, response.status, bodyText);
             return null;
         }
@@ -3878,6 +3909,17 @@ let _authKeepAliveStarted = false;
 const _authWait = (ms) => new Promise(r => setTimeout(r, ms));
 const isAbortError = (err) => err && (err.name === 'AbortError' || /aborted/i.test(err.message));
 const hasLocalAuth = () => !!_authAccessToken || !!getStoredAuth();
+const decodeJwtPayload = (token) => {
+    try {
+        const parts = token.split('.');
+        return parts[1] ? JSON.parse(atob(parts[1])) : null;
+    } catch(e) { return null; }
+};
+const isTokenExpired = (token, skewMs = 30000) => {
+    const p = decodeJwtPayload(token);
+    if (!p || !p.exp) return false;
+    return Date.now() > (p.exp * 1000 - skewMs);
+};
 function getStoredAuth() {
     try {
         const key = `sb-${SUPABASE_REF}-auth-token`;
@@ -3897,13 +3939,42 @@ async function safeGetSession() {
         return { data: { session: null }, error: err };
     }
 }
+async function tryRefreshSession() {
+    try {
+        const { data, error } = await _supabaseAuth.auth.refreshSession();
+        if (error) {
+            console.warn('[AUTH] refreshSession error:', error.message || error);
+            return null;
+        }
+        if (data && data.session) {
+            _authAccessToken = data.session.access_token;
+            _lastAuthAt = Date.now();
+            return data.session;
+        }
+    } catch (err) {
+        if (isAbortError(err)) {
+            console.warn('[AUTH] refreshSession aborted (safe to ignore)');
+        } else {
+            console.error('[AUTH] refreshSession error:', err);
+        }
+    }
+    return null;
+}
 async function restoreSessionIfPossible() {
     if (_authRestoring) return false;
     _authRestoring = true;
     try {
         const stored = getStoredAuth();
         if (stored && stored.access_token && stored.refresh_token) {
-            await _supabaseAuth.auth.setSession({ access_token: stored.access_token, refresh_token: stored.refresh_token });
+            if (isTokenExpired(stored.access_token)) {
+                const refreshed = await tryRefreshSession();
+                if (refreshed) {
+                    hideLoginScreen();
+                    return true;
+                }
+            } else {
+                await _supabaseAuth.auth.setSession({ access_token: stored.access_token, refresh_token: stored.refresh_token });
+            }
             const { data: { session } } = await safeGetSession();
             if (session) {
                 _authAccessToken = session.access_token;
