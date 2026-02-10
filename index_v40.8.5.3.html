@@ -891,6 +891,8 @@ const ENABLE_CAMSCANNER_API = false;
 document.addEventListener('DOMContentLoaded', async () => {
     loadCamScanState();
     // Don't call load() here — initAuth() will call load() after session is established.
+    // Calling load() before auth causes 401 JWT expired errors on all tables,
+    // which cascades into false SIGNED_OUT events and a logout loop.
     if (ENABLE_CAMSCANNER_API) loadCamScannerDocs();
 });
 
@@ -3865,17 +3867,31 @@ const _supabaseAuth = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
 });
 let _manualSignOut = false;
 let _lastAuthAt = 0;
-const AUTH_GRACE_MS = 15000;
+const AUTH_GRACE_MS = 120000;
 let authPendingToken = false;
-let _authHandling = false;
-let _authRestoring = false;
+let _authHandling = false;   // re-entrancy guard for handleAuthSession
+let _authRestoring = false;  // prevent restore → SIGNED_IN → restore loop
 const _authWait = (ms) => new Promise(r => setTimeout(r, ms));
+const isAbortError = (err) => err && (err.name === 'AbortError' || /aborted/i.test(err.message));
+const hasLocalAuth = () => !!_authAccessToken || !!getStoredAuth();
 function getStoredAuth() {
     try {
         const key = `sb-${SUPABASE_REF}-auth-token`;
         const raw = localStorage.getItem(key);
         return raw ? JSON.parse(raw) : null;
     } catch (e) { return null; }
+}
+async function safeGetSession() {
+    try {
+        return await _supabaseAuth.auth.getSession();
+    } catch (err) {
+        if (isAbortError(err)) {
+            console.warn('[AUTH] getSession aborted (safe to ignore)');
+            return { data: { session: null }, error: err };
+        }
+        console.error('[AUTH] getSession error:', err);
+        return { data: { session: null }, error: err };
+    }
 }
 async function restoreSessionIfPossible() {
     if (_authRestoring) return false;
@@ -3884,7 +3900,7 @@ async function restoreSessionIfPossible() {
         const stored = getStoredAuth();
         if (stored && stored.access_token && stored.refresh_token) {
             await _supabaseAuth.auth.setSession({ access_token: stored.access_token, refresh_token: stored.refresh_token });
-            const { data: { session } } = await _supabaseAuth.auth.getSession();
+            const { data: { session } } = await safeGetSession();
             if (session) {
                 _authAccessToken = session.access_token;
                 _lastAuthAt = Date.now();
@@ -3893,11 +3909,20 @@ async function restoreSessionIfPossible() {
             }
         }
         return false;
-    } catch (e) { return false; }
+    } catch (e) {
+        if (isAbortError(e)) {
+            console.warn('[AUTH] restore aborted (safe to ignore)');
+        }
+        return false;
+    }
     finally { _authRestoring = false; }
 }
 
-function showLoginScreen() {
+function showLoginScreen(force = false) {
+    if (!force && hasLocalAuth()) {
+        hideLoginScreen();
+        return;
+    }
     document.getElementById('auth-overlay').style.display = 'flex';
     document.getElementById('auth-loading').style.display = 'none';
     document.getElementById('auth-error').style.display = 'none';
@@ -3942,13 +3967,14 @@ async function signOutUser() {
     await _supabaseAuth.auth.signOut();
     _authAccessToken = null;
     _currentUser = null;
-    showLoginScreen();
+    showLoginScreen(true);
     _manualSignOut = false;
 }
 
 async function handleAuthSession(session) {
     if (!session) { showLoginScreen(); return; }
     if (_authHandling) {
+        // Still update the token even if we skip the full flow
         _authAccessToken = session.access_token;
         return;
     }
@@ -3960,7 +3986,7 @@ async function handleAuthSession(session) {
         _lastAuthAt = Date.now();
         // Clean auth hash from URL — but only AFTER session is confirmed
         if (window.location.hash && window.location.hash.includes('access_token')) {
-            var { data: { session: confirmSess } } = await _supabaseAuth.auth.getSession();
+            var { data: { session: confirmSess } } = await safeGetSession();
             if (confirmSess) {
                 history.replaceState({}, '', window.location.pathname + window.location.search);
             }
@@ -4031,6 +4057,16 @@ async function handleAuthSession(session) {
         
     } catch (err) {
         console.error('[AUTH] handleAuthSession error:', err);
+        if (isAbortError(err) || hasLocalAuth()) {
+            // Abort/timeouts should not kick the user out
+            hideLoginScreen();
+            addSignOutButton();
+            if (!window._crmDataLoaded) {
+                window._crmDataLoaded = true;
+                try { await load(); render(); } catch(e) { console.error('[AUTH] load/render error:', e); }
+            }
+            return;
+        }
         showAuthError('Authentication error: ' + err.message);
     } finally {
         _authHandling = false;
@@ -4071,14 +4107,14 @@ async function initAuth() {
 
         // First attempt at session restore
         await restoreSessionIfPossible();
-        var { data: { session } } = await _supabaseAuth.auth.getSession();
+        var { data: { session } } = await safeGetSession();
 
         // If no session but URL has token, wait and retry (Supabase needs time to process)
         if (!session && authPendingToken) {
             console.log('[AUTH] Token in URL but no session yet, retrying...');
             await _authWait(800);
             await restoreSessionIfPossible();
-            var result = await _supabaseAuth.auth.getSession();
+            var result = await safeGetSession();
             session = result.data.session;
             authPendingToken = false;
         }
@@ -4087,6 +4123,16 @@ async function initAuth() {
             console.log('[AUTH] Session found for:', session.user.email);
             _lastAuthAt = Date.now();
             await handleAuthSession(session);
+        } else if (hasLocalAuth() || authPendingToken) {
+            console.log('[AUTH] No session yet, but local auth exists — staying in app');
+            hideLoginScreen();
+            addSignOutButton();
+            if (!window._crmDataLoaded) {
+                window._crmDataLoaded = true;
+                try { await load(); render(); } catch(e) { console.error('[AUTH] load/render error:', e); }
+            }
+            setTimeout(initAuth, 1500);
+            return;
         } else {
             console.log('[AUTH] No session found, showing login');
             showLoginScreen();
@@ -4119,19 +4165,24 @@ async function initAuth() {
             }
 
             if (event === 'SIGNED_OUT') {
-                if (_manualSignOut) { showLoginScreen(); return; }
+                if (_manualSignOut) { showLoginScreen(true); return; }
 
                 // Guard against false sign-outs during grace window or pending token
                 const inGrace = (Date.now() - _lastAuthAt) < AUTH_GRACE_MS;
-                const hasStored = !!getStoredAuth();
+                const hasStored = hasLocalAuth();
+                const offline = (navigator.onLine === false);
 
-                if (inGrace || authPendingToken || hasStored) {
+                if (offline || inGrace || authPendingToken || hasStored) {
                     console.log('[AUTH] Ignoring SIGNED_OUT (grace:', inGrace, 'pending:', authPendingToken, 'stored:', hasStored, ')');
                     await restoreSessionIfPossible();
-                    var { data: { session: s2 } } = await _supabaseAuth.auth.getSession();
+                    var { data: { session: s2 } } = await safeGetSession();
                     if (s2) {
                         _lastAuthAt = Date.now();
                         await handleAuthSession(s2);
+                        return;
+                    }
+                    if (hasStored) {
+                        hideLoginScreen();
                         return;
                     }
                 }
@@ -4141,23 +4192,23 @@ async function initAuth() {
 
         // Keep-alive: prevent idle sign-out by periodically checking session
         setInterval(async () => {
-            var { data: { session: s } } = await _supabaseAuth.auth.getSession();
-            if (!s && getStoredAuth()) {
-                console.log('[AUTH] Keep-alive: restoring session');
-                await restoreSessionIfPossible();
+            try {
+                var { data: { session: s } } = await safeGetSession();
+                if (!s && getStoredAuth()) {
+                    console.log('[AUTH] Keep-alive: restoring session');
+                    await restoreSessionIfPossible();
+                }
+            } catch (e) {
+                if (!isAbortError(e)) console.error('[AUTH] Keep-alive error:', e);
             }
         }, 30000);
 
     } catch (err) {
-        if (err && err.name === 'AbortError') {
-            console.warn('[AUTH] initAuth AbortError (safe to ignore), retrying…');
-            try {
-                await _authWait(500);
-                var { data: { session: retrySession } } = await _supabaseAuth.auth.getSession();
-                if (retrySession) { await handleAuthSession(retrySession); return; }
-                var restored = await restoreSessionIfPossible();
-                if (restored) return;
-            } catch(e2) { console.warn('[AUTH] retry also failed:', e2); }
+        // AbortError is a known Supabase race condition — NOT a real auth failure
+        if (isAbortError(err)) {
+            console.warn('[AUTH] initAuth AbortError (safe to ignore), retrying...');
+            setTimeout(initAuth, 1500);
+            return;
         }
         console.error('[AUTH] initAuth error:', err);
         showLoginScreen();
