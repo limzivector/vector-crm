@@ -747,22 +747,12 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 // Helper function to make Supabase API calls
 let sbLastError = null;
 async function sbFetch(table, method = 'GET', query = '', data = null, headers = {}) {
-    // Always get the freshest token from the Supabase auth client
-    var _freshToken = _authAccessToken;
-    try {
-        var { data: { session: _s } } = await _supabaseAuth.auth.getSession();
-        if (_s && _s.access_token) {
-            _freshToken = _s.access_token;
-            _authAccessToken = _freshToken; // keep global in sync
-        }
-    } catch(e) {}
-
     const url = `${SUPABASE_URL}/rest/v1/${table}${query}`;
     const options = {
         method,
         headers: {
             'apikey': SUPABASE_KEY,
-            'Authorization': `Bearer ${_freshToken || SUPABASE_KEY}`,
+            'Authorization': `Bearer ${_authAccessToken || SUPABASE_KEY}`,
             'Content-Type': 'application/json',
             ...headers
         }
@@ -4162,6 +4152,20 @@ async function initAuth() {
         }, 30000);
 
     } catch (err) {
+        // AbortError is a known Supabase race condition — NOT a real auth failure
+        if (err && err.name === 'AbortError') {
+            console.warn('[AUTH] initAuth AbortError (safe to ignore), retrying...');
+            try {
+                await _authWait(500);
+                var { data: { session: retrySession } } = await _supabaseAuth.auth.getSession();
+                if (retrySession) {
+                    await handleAuthSession(retrySession);
+                    return;
+                }
+                var restored = await restoreSessionIfPossible();
+                if (restored) return;
+            } catch(e2) {}
+        }
         console.error('[AUTH] initAuth error:', err);
         showLoginScreen();
     }
