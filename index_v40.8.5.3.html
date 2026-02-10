@@ -747,12 +747,22 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 // Helper function to make Supabase API calls
 let sbLastError = null;
 async function sbFetch(table, method = 'GET', query = '', data = null, headers = {}) {
+    // Always get the freshest token from the Supabase auth client
+    var _freshToken = _authAccessToken;
+    try {
+        var { data: { session: _s } } = await _supabaseAuth.auth.getSession();
+        if (_s && _s.access_token) {
+            _freshToken = _s.access_token;
+            _authAccessToken = _freshToken;
+        }
+    } catch(e) {}
+
     const url = `${SUPABASE_URL}/rest/v1/${table}${query}`;
     const options = {
         method,
         headers: {
             'apikey': SUPABASE_KEY,
-            'Authorization': `Bearer ${_authAccessToken || SUPABASE_KEY}`,
+            'Authorization': `Bearer ${_freshToken || SUPABASE_KEY}`,
             'Content-Type': 'application/json',
             ...headers
         }
@@ -3865,6 +3875,12 @@ const _supabaseAuth = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
 let _manualSignOut = false;
+let _lastAuthAt = 0;
+const AUTH_GRACE_MS = 15000;
+let authPendingToken = false;
+let _authHandling = false;
+let _authRestoring = false;
+const _authWait = (ms) => new Promise(r => setTimeout(r, ms));
 function getStoredAuth() {
     try {
         const key = `sb-${SUPABASE_REF}-auth-token`;
@@ -3873,18 +3889,23 @@ function getStoredAuth() {
     } catch (e) { return null; }
 }
 async function restoreSessionIfPossible() {
-    const stored = getStoredAuth();
-    if (stored && stored.access_token && stored.refresh_token) {
-        try {
+    if (_authRestoring) return false;
+    _authRestoring = true;
+    try {
+        const stored = getStoredAuth();
+        if (stored && stored.access_token && stored.refresh_token) {
             await _supabaseAuth.auth.setSession({ access_token: stored.access_token, refresh_token: stored.refresh_token });
             const { data: { session } } = await _supabaseAuth.auth.getSession();
             if (session) {
-                await handleAuthSession(session);
+                _authAccessToken = session.access_token;
+                _lastAuthAt = Date.now();
+                hideLoginScreen();
                 return true;
             }
-        } catch (e) {}
-    }
-    return false;
+        }
+        return false;
+    } catch (e) { return false; }
+    finally { _authRestoring = false; }
 }
 
 function showLoginScreen() {
@@ -3938,13 +3959,22 @@ async function signOutUser() {
 
 async function handleAuthSession(session) {
     if (!session) { showLoginScreen(); return; }
-    
+    if (_authHandling) {
+        _authAccessToken = session.access_token;
+        return;
+    }
+    _authHandling = true;
+
     try {
         console.log('[AUTH] handleAuthSession for:', session.user.email);
         _authAccessToken = session.access_token;
-        // Clean auth hash from URL to avoid session glitches
+        _lastAuthAt = Date.now();
+        // Clean auth hash from URL — but only AFTER session is confirmed
         if (window.location.hash && window.location.hash.includes('access_token')) {
-            history.replaceState({}, '', window.location.pathname + window.location.search);
+            var { data: { session: confirmSess } } = await _supabaseAuth.auth.getSession();
+            if (confirmSess) {
+                history.replaceState({}, '', window.location.pathname + window.location.search);
+            }
         }
         
         // Check if user exists in DB
@@ -4013,6 +4043,8 @@ async function handleAuthSession(session) {
     } catch (err) {
         console.error('[AUTH] handleAuthSession error:', err);
         showAuthError('Authentication error: ' + err.message);
+    } finally {
+        _authHandling = false;
     }
 }
 
@@ -4045,38 +4077,88 @@ async function initAuth() {
     }
     console.log('[AUTH] initAuth called');
     try {
+        // Detect if URL has an OAuth callback token
+        authPendingToken = /access_token=|code=/.test(location.hash);
+
+        // First attempt at session restore
+        await restoreSessionIfPossible();
         var { data: { session } } = await _supabaseAuth.auth.getSession();
+
+        // If no session but URL has token, wait and retry (Supabase needs time to process)
+        if (!session && authPendingToken) {
+            console.log('[AUTH] Token in URL but no session yet, retrying...');
+            await _authWait(800);
+            await restoreSessionIfPossible();
+            var result = await _supabaseAuth.auth.getSession();
+            session = result.data.session;
+            authPendingToken = false;
+        }
+
         if (session) {
             console.log('[AUTH] Session found for:', session.user.email);
+            _lastAuthAt = Date.now();
             await handleAuthSession(session);
         } else {
-            // Try restoring from localStorage before showing login
-            const restored = await restoreSessionIfPossible();
-            if (!restored) {
-                console.log('[AUTH] No session found, showing login');
-                showLoginScreen();
-            }
+            console.log('[AUTH] No session found, showing login');
+            showLoginScreen();
         }
-        
+
         // Listen for auth changes (token refresh, sign in/out)
         _supabaseAuth.auth.onAuthStateChange(async (event, session) => {
-            console.log('[AUTH] Auth state changed:', event);
-            if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-                await handleAuthSession(session);
-            } else if (event === 'SIGNED_OUT') {
+            console.log('[AUTH] Auth state changed:', event, 'session:', !!session);
+
+            // For token refreshes, just update the token — don't re-run full auth flow
+            if (event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+                _lastAuthAt = Date.now();
+                if (session) {
+                    _authAccessToken = session.access_token;
+                    hideLoginScreen();
+                }
+                return;
+            }
+
+            if (event === 'SIGNED_IN') {
+                _lastAuthAt = Date.now();
+                if (session && !_authRestoring) {
+                    hideLoginScreen();
+                    await handleAuthSession(session);
+                } else if (session) {
+                    _authAccessToken = session.access_token;
+                    hideLoginScreen();
+                }
+                return;
+            }
+
+            if (event === 'SIGNED_OUT') {
                 if (_manualSignOut) { showLoginScreen(); return; }
-                // Guard against false sign-outs by rechecking session or restoring
-                try {
+
+                // Guard against false sign-outs during grace window or pending token
+                const inGrace = (Date.now() - _lastAuthAt) < AUTH_GRACE_MS;
+                const hasStored = !!getStoredAuth();
+
+                if (inGrace || authPendingToken || hasStored) {
+                    console.log('[AUTH] Ignoring SIGNED_OUT (grace:', inGrace, 'pending:', authPendingToken, 'stored:', hasStored, ')');
+                    await restoreSessionIfPossible();
                     var { data: { session: s2 } } = await _supabaseAuth.auth.getSession();
                     if (s2) {
+                        _lastAuthAt = Date.now();
                         await handleAuthSession(s2);
                         return;
                     }
-                } catch(e) {}
-                const restored = await restoreSessionIfPossible();
-                if (!restored) showLoginScreen();
+                }
+                showLoginScreen();
             }
         });
+
+        // Keep-alive: prevent idle sign-out by periodically checking session
+        setInterval(async () => {
+            var { data: { session: s } } = await _supabaseAuth.auth.getSession();
+            if (!s && getStoredAuth()) {
+                console.log('[AUTH] Keep-alive: restoring session');
+                await restoreSessionIfPossible();
+            }
+        }, 30000);
+
     } catch (err) {
         console.error('[AUTH] initAuth error:', err);
         showLoginScreen();
