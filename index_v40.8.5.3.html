@@ -3868,9 +3868,13 @@ const _supabaseAuth = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
 let _manualSignOut = false;
 let _lastAuthAt = 0;
 const AUTH_GRACE_MS = 120000;
+const AUTH_RETRY_MS = 1500;
 let authPendingToken = false;
 let _authHandling = false;   // re-entrancy guard for handleAuthSession
 let _authRestoring = false;  // prevent restore → SIGNED_IN → restore loop
+let _authInitRunning = false;
+let _authListenerAttached = false;
+let _authKeepAliveStarted = false;
 const _authWait = (ms) => new Promise(r => setTimeout(r, ms));
 const isAbortError = (err) => err && (err.name === 'AbortError' || /aborted/i.test(err.message));
 const hasLocalAuth = () => !!_authAccessToken || !!getStoredAuth();
@@ -4093,7 +4097,17 @@ function addSignOutButton() {
     }
 }
 
+// Swallow Supabase abort errors that otherwise surface as unhandled rejections
+window.addEventListener('unhandledrejection', (e) => {
+    if (isAbortError(e.reason)) {
+        console.warn('[AUTH] Swallowing AbortError (unhandledrejection)');
+        if (typeof e.preventDefault === 'function') e.preventDefault();
+    }
+});
+
 async function initAuth() {
+    if (_authInitRunning) return;
+    _authInitRunning = true;
     // If we already have a token from localStorage, hide overlay immediately
     if (_authAccessToken) {
         hideLoginScreen();
@@ -4131,7 +4145,8 @@ async function initAuth() {
                 window._crmDataLoaded = true;
                 try { await load(); render(); } catch(e) { console.error('[AUTH] load/render error:', e); }
             }
-            setTimeout(initAuth, 1500);
+            setTimeout(initAuth, AUTH_RETRY_MS);
+            _authInitRunning = false;
             return;
         } else {
             console.log('[AUTH] No session found, showing login');
@@ -4139,6 +4154,8 @@ async function initAuth() {
         }
 
         // Listen for auth changes (token refresh, sign in/out)
+        if (!_authListenerAttached) {
+        _authListenerAttached = true;
         _supabaseAuth.auth.onAuthStateChange(async (event, session) => {
             console.log('[AUTH] Auth state changed:', event, 'session:', !!session);
 
@@ -4186,32 +4203,40 @@ async function initAuth() {
                         return;
                     }
                 }
-                showLoginScreen();
+                // Only show login if we truly have no local auth
+                setTimeout(() => { if (!hasLocalAuth()) showLoginScreen(true); }, 1000);
             }
         });
+        }
 
         // Keep-alive: prevent idle sign-out by periodically checking session
-        setInterval(async () => {
-            try {
-                var { data: { session: s } } = await safeGetSession();
-                if (!s && getStoredAuth()) {
-                    console.log('[AUTH] Keep-alive: restoring session');
-                    await restoreSessionIfPossible();
+        if (!_authKeepAliveStarted) {
+            _authKeepAliveStarted = true;
+            setInterval(async () => {
+                try {
+                    var { data: { session: s } } = await safeGetSession();
+                    if (!s && getStoredAuth()) {
+                        console.log('[AUTH] Keep-alive: restoring session');
+                        await restoreSessionIfPossible();
+                    }
+                } catch (e) {
+                    if (!isAbortError(e)) console.error('[AUTH] Keep-alive error:', e);
                 }
-            } catch (e) {
-                if (!isAbortError(e)) console.error('[AUTH] Keep-alive error:', e);
-            }
-        }, 30000);
+            }, 30000);
+        }
 
     } catch (err) {
         // AbortError is a known Supabase race condition — NOT a real auth failure
         if (isAbortError(err)) {
             console.warn('[AUTH] initAuth AbortError (safe to ignore), retrying...');
-            setTimeout(initAuth, 1500);
+            setTimeout(initAuth, AUTH_RETRY_MS);
+            _authInitRunning = false;
             return;
         }
         console.error('[AUTH] initAuth error:', err);
         showLoginScreen();
+    } finally {
+        _authInitRunning = false;
     }
 }
 
