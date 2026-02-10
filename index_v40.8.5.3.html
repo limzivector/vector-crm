@@ -83,6 +83,7 @@
         .scans-header, .scans-row { display: grid; grid-template-columns: 40px 2fr 1fr 120px 100px 100px; }
         .scans-header { background: var(--gray-lt); font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; border-bottom: 1px solid var(--border); }
         .scans-header > div, .scans-row > div { padding: 10px 12px; border-right: 1px solid var(--border); display: flex; align-items: center; }
+        .scans-header > div:last-child, .scans-row > div:last-child { border-right: none; }
         .scans-row { border-bottom: 1px solid var(--border); cursor: pointer; }
         .scans-row:hover { background: #fafbfc; }
         .scan-indicator { width: 24px; height: 24px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 12px; }
@@ -694,10 +695,10 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
                 <div class="form-group"><label class="form-label">Is this a Return Product?</label><select class="form-select" id="f-return"><option value="no">No</option><option value="yes">Yes</option></select></div>
                 <div class="form-group"><label class="form-label">Client Name <span class="req">*</span></label><select class="form-select" id="f-client" onchange="onClientChange()"><option value="">Select...</option></select><div class="inline-add hidden" id="inline-client"><input type="text" class="form-input" id="il-client" placeholder="Company"><button class="btn btn-primary" onclick="addInlineClient()">Add</button></div><div class="form-hint"><a href="#" onclick="toggleInline('client');return false">+ Add new</a></div></div>
                 <div class="form-group"><label class="form-label">Project Name <span class="req">*</span></label><select class="form-select" id="f-project"><option value="">Select...</option><option value="_unknown">🚩 Unknown</option></select><div class="inline-add hidden" id="inline-project"><input type="text" class="form-input" id="il-project" placeholder="Project"><button class="btn btn-primary" onclick="addInlineProject()">Add</button></div><div class="form-hint"><a href="#" onclick="toggleInline('project');return false">+ Add new</a></div></div>
-                <div class="form-group"><label class="form-label">Project Manager</label><select class="form-select" id="f-pm"><option value="">Select PM...</option></select></div>
+                <div class="form-group"><label class="form-label">Project Managers (CC)</label><select class="form-select" id="f-pm" multiple size="3"></select><div class="form-hint">Select one or more PMs to CC</div></div>
                 <div class="form-group"><label class="form-label">Manufacturer</label><input type="text" class="form-input" id="f-mfr"></div>
                 <div class="form-group"><label class="form-label">Cartons/Pallets</label><input type="text" class="form-input" id="f-cartons"></div>
-                <div class="form-group"><label class="form-label">Warehouse Location</label><div style="position:relative"><input type="text" class="form-input" id="f-location" placeholder="Select location..." oninput="showFormLocSuggestions(this,'f-loc-sug')" onfocus="focusFormLocInput(this,'f-loc-sug')" onblur="blurFormLocInput(this,'f-loc-sug')" autocomplete="off"><div class="loc-suggestions" id="f-loc-sug" style="display:none"></div></div></div>
+                <div class="form-group"><label class="form-label">Warehouse Location</label><select class="form-select" id="f-location" onchange="onFormLocationChange(this)"></select></div>
                 <div class="form-row">
                     <div class="form-group"><label class="form-label">Received Date</label><input type="date" class="form-input" id="f-date"></div>
                     <div class="form-group"><label class="form-label">Complete</label><select class="form-select" id="f-status"><option value="received">Received</option><option value="not-received">Not Received</option></select></div>
@@ -836,7 +837,7 @@ let clients=[], projects=[], people=[], scans=[], shipments=[], punchlist=[], di
 let loadingSheets=[], projectCompletions=[];
 let staffRoles=[], staffPermissions=[], crmUsers=[], crmIntegrations=[];
 let activeSettingsTab = 'integrations';
-let currentMonth = new Date(), currentScan = null, currentProject = null, pendingScan = null, openPOs = {};
+let currentMonth = new Date(), currentScan = null, currentScanSource = 'local', currentCamScanId = null, currentProject = null, pendingScan = null, openPOs = {};
 let pendingPhotoUploads = [], punchlistFilter = {project: null, type: null, status: null};
 let projectToDelete = null;
 let currentUserId = null;
@@ -880,11 +881,15 @@ const samplePunchlist = [
     {id:3,projectId:3,type:'backorder',description:'Credenza top in walnut',manufacturer:'Deskmakers',po:'11456-01-RS Deskmakers',quantity:1,status:'resolved',reportedById:3,dateReported:'2025-02-04',photos:[],notes:'Ordered and scheduled for delivery 2/15'}
 ];
 
+const USE_ONEDRIVE_SCAN_INBOX = true;
+const SHOW_CAM_INBOX = false;
+const ENABLE_CAMSCANNER_API = false;
+
 document.addEventListener('DOMContentLoaded', async () => {
     loadCamScanState();
     await load();
     render();
-    loadCamScannerDocs();
+    if (ENABLE_CAMSCANNER_API) loadCamScannerDocs();
 });
 
 async function load() {
@@ -973,12 +978,12 @@ async function load() {
         }
     }
 
-    // Load Outlook scan inbox (Supabase)
+    // Load scan inbox (Supabase)
     await loadScanInbox();
     // Recompute PM access after data load
     recomputePMAccess();
     // Cache to localStorage
-    await loadCamScannerDocs();
+    if (ENABLE_CAMSCANNER_API) await loadCamScannerDocs();
     saveLocal();
     // Load warehouse bins for location dropdown
     var _whBinsData = await sbFetch('warehouse_bins','GET');
@@ -1033,28 +1038,56 @@ async function loadScanInbox() {
     scanInbox = rows || [];
 }
 function render() { renderScans(); renderShipments(); renderCamScanInbox(); renderCalendar(); renderProjects(); renderPeople(); renderClients(); renderPunchlist(); renderDispatches(); renderLoadingSheet(); populateSelects(); updateBadges(); renderSettings(); }
-function updateBadges() { const p = scans.filter(s => s.status === 'pending').length; $('#nav-scans-badge').textContent = p; $('#nav-scans-badge').style.display = p > 0 ? 'inline' : 'none'; }
+function updateBadges() {
+    const pendingInbox = (scanInbox || []).filter(s => s.status === 'pending').length;
+    const pendingLocal = scans.filter(s => s.status === 'pending').length;
+    const p = USE_ONEDRIVE_SCAN_INBOX ? pendingInbox : (pendingInbox + pendingLocal);
+    $('#nav-scans-badge').textContent = p;
+    $('#nav-scans-badge').style.display = p > 0 ? 'inline' : 'none';
+}
 
 function renderScans() {
   var localScans = (scans || []).map(function(sc) { sc.source = sc.source || "local"; return sc; });
-  var all = localScans.concat(camScans || []);
+  var inboxScans = (scanInbox || []).map(function(sc) {
+    return {
+      id: sc.id,
+      filename: sc.filename || sc.email_subject || sc.po || "Scan",
+      timestamp: sc.received_at || sc.created_at || sc.timestamp || new Date().toISOString(),
+      status: sc.status || "pending",
+      source: sc.source || "onedrive",
+      pdf_url: sc.file_url || sc.pdf_url || ""
+    };
+  });
+  var all = USE_ONEDRIVE_SCAN_INBOX ? inboxScans : localScans.concat(inboxScans).concat(camScans || []);
   all.sort(function(a, b) { return new Date(b.timestamp) - new Date(a.timestamp); });
   var el = document.getElementById("scans-table") || document.getElementById("tab-scans");
   if (!el) return;
   if (all.length === 0) {
-    el.innerHTML = '<p style="color:#888;text-align:center;padding:40px">No scans yet. CamScanner docs and local scans will appear here.</p>';
+    el.innerHTML = '<p style="color:#888;text-align:center;padding:40px">No scans yet. OneDrive files will appear here.</p>';
     return;
   }
-  var html = '<table class="data-table"><thead><tr>';
-  html += "<th>Name</th><th>Source</th><th>Date</th><th>Status</th><th>Actions</th>";
-  html += "</tr></thead><tbody>";
+  var html = '<div class="spreadsheet scans-grid">';
+  html += '<div class="scans-header"><div></div><div>Name</div><div>Source</div><div>Date</div><div>Status</div><div>Actions</div></div>';
   all.forEach(function(sc) {
     var date = sc.timestamp ? new Date(sc.timestamp).toLocaleDateString() : "";
-    var badge = sc.source === "camscanner" ? '<span style="background:#4CAF50;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">CS</span>' : '<span style="background:#2196F3;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">Local</span>';
-    var actions = sc.pdf_url ? '<a href="' + sc.pdf_url + '" target="_blank" style="color:#1a73e8">View PDF</a>' : "";
-    html += "<tr><td>" + (sc.filename || sc.po || "Untitled") + "</td><td>" + badge + "</td><td>" + date + "</td><td>" + (sc.status || "done") + "</td><td>" + actions + "</td></tr>";
+    var sourceLabel = sc.source === "camscanner" ? "CS" : (sc.source === "onedrive" ? "OneDrive" : "Local");
+    var sourceColor = sc.source === "camscanner" ? "var(--green)" : (sc.source === "onedrive" ? "var(--purple)" : "var(--blue)");
+    var statusText = sc.status || "pending";
+    var statusClass = statusText === "pending" ? "pending" : "done";
+    var pdfUrl = sc.pdf_url || sc.file_url || "";
+    var actions = pdfUrl ? '<a href="' + pdfUrl + '" target="_blank" onclick="event.stopPropagation()" style="color:var(--blue)">View PDF</a>' : "";
+    var safeId = String(sc.id).replace(/'/g, "\\'");
+    var source = sc.source || "local";
+    html += '<div class="scans-row" onclick="openRawScanForm(\'' + safeId + '\',\'' + source + '\')">' +
+      '<div><div class="scan-indicator ' + statusClass + '">' + (statusClass === "pending" ? "…" : "✓") + '</div></div>' +
+      '<div>' + escapeHtml(sc.filename || sc.po || "Untitled") + '</div>' +
+      '<div><span style="background:' + sourceColor + ';color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">' + sourceLabel + '</span></div>' +
+      '<div>' + date + '</div>' +
+      '<div>' + escapeHtml(statusText) + '</div>' +
+      '<div>' + actions + '</div>' +
+    '</div>';
   });
-  html += "</tbody></table>";
+  html += "</div>";
   el.innerHTML = html;
 }
 
@@ -1170,6 +1203,7 @@ async function processCamScan(id) {
 function renderCamScanInbox() {
     const el = document.getElementById('cam-inbox');
     if (!el) return;
+    if (!SHOW_CAM_INBOX) { el.innerHTML = ''; return; }
     const useInbox = (scanInbox || []).length > 0;
     const pending = useInbox
         ? (scanInbox || []).filter(sc => sc.status !== 'processed' && sc.status !== 'ignored')
@@ -1197,6 +1231,7 @@ function renderCamScanInbox() {
         const pmOptions = pms.map(pm => `<option value="${pm.email||''}" data-email="${pm.email||''}" ${pmEmails.includes(pm.email)?'selected':''}>${pm.email ? (pm.name + ' — ' + pm.email) : pm.name}</option>`).join('');
         const docName = sc.filename || sc.email_subject || sc.po || 'Scan';
         const pdfUrl = sc.file_url || sc.pdf_url || '';
+        const locOpts = buildLocationOptions(edit.location || '');
 
         html += '<tr>';
         html += '<td>' + escapeHtml(docName) + '</td>';
@@ -1208,7 +1243,7 @@ function renderCamScanInbox() {
         html += `<td><input value="${edit.manufacturer || ''}" onchange="updateCamEdit('${sc.id}','manufacturer',this.value)"></td>`;
         html += `<td><input type="date" value="${edit.receivedDate || ''}" onchange="updateCamEdit('${sc.id}','receivedDate',this.value)"></td>`;
         html += `<td><input value="${edit.cartons || ''}" onchange="updateCamEdit('${sc.id}','cartons',this.value)"></td>`;
-        html += `<td><input value="${edit.location || ''}" onchange="updateCamEdit('${sc.id}','location',this.value)"></td>`;
+        html += `<td><select onchange="updateCamLocation('${sc.id}',this)">${locOpts}</select></td>`;
         html += `<td class="cs-actions"><button class="btn btn-primary" style="padding:4px 10px;font-size:11px" onclick="processCamScan('${sc.id}')">Process</button> <button class="btn btn-outline" style="padding:4px 10px;font-size:11px" onclick="dismissCamScan('${sc.id}')">Dismiss</button></td>`;
         html += '</tr>';
     });
@@ -1504,59 +1539,113 @@ function handleCameraUpload(event) {
 }
 
 function openScanForm(id) {
-    currentScan = scans.find(s => s.id === id);
-    if (!currentScan) return;
-    $('#scan-filename').innerHTML = currentScan.pdf_url ? '<a href="'+currentScan.pdf_url+'" target="_blank" style="color:var(--accent)">' + currentScan.filename + ' 📄</a>' : currentScan.filename;
-    $('#scan-time').textContent = new Date(currentScan.timestamp).toLocaleString();
+    openRawScanForm(id, 'local');
+}
+
+function openRawScanForm(id, source) {
+    var src = source || 'local';
+    var isCam = src !== 'local';
+    currentScanSource = isCam ? 'cam' : 'local';
+    currentCamScanId = null;
+    currentScan = null;
+
+    var sc = null;
+    if (src === 'inbox') {
+        sc = (scanInbox || []).find(function(x){ return String(x.id) === String(id); });
+    } else if (src === 'camscanner') {
+        sc = (camScans || []).find(function(x){ return String(x.id) === String(id); });
+    } else {
+        sc = (scans || []).find(function(x){ return String(x.id) === String(id); });
+        currentScan = sc || null;
+    }
+    if (!sc) return;
+    if (isCam) currentCamScanId = sc.id;
+
+    var pdfUrl = sc.pdf_url || sc.file_url || '';
+    var title = sc.filename || sc.email_subject || sc.po || 'Scan';
+    $('#scan-filename').innerHTML = pdfUrl ? '<a href="'+pdfUrl+'" target="_blank" style="color:var(--accent)">' + escapeHtml(title) + ' 📄</a>' : escapeHtml(title);
+    var ts = sc.timestamp || sc.received_at || sc.created_at || new Date().toISOString();
+    $('#scan-time').textContent = new Date(ts).toLocaleString();
 
     const thumbnailContainer = $('#scan-thumbnail-container');
-    if (currentScan.thumbnail) {
+    if (!isCam && currentScan && currentScan.thumbnail) {
         thumbnailContainer.innerHTML = `<img src="${currentScan.thumbnail}" class="scan-thumbnail" alt="Scan thumbnail">`;
     } else {
         thumbnailContainer.innerHTML = '';
     }
 
-    $('#f-po').value = currentScan.po || '';
-    $('#f-client').value = '';
-    $('#f-project').innerHTML = '<option value="">Select...</option><option value="_unknown">🚩 Unknown</option>';
-    if ($('#f-pm')) $('#f-pm').innerHTML = '<option value="">Select PM...</option>';
-    $('#f-mfr').value = '';
-    $('#f-cartons').value = '';
-    $('#f-date').value = new Date().toISOString().split('T')[0];
-    $('#f-status').value = 'received';
+    const visibleClients = pmAccess.enabled ? clients.filter(c => pmAccess.clientIds.includes(c.id)) : clients;
+    $('#f-client').innerHTML = '<option value="">Select...</option>' + visibleClients.map(c => `<option value="${c.id}">${escapeHtml(c.company)}</option>`).join('');
+
+    var edit = isCam ? ensureCamEditDefaults(sc) : (currentScan || {});
+    if (isCam && !edit.receivedDate && (sc.received_at || sc.created_at)) {
+        edit.receivedDate = (sc.received_at || sc.created_at).split('T')[0];
+    }
+
+    $('#f-po').value = edit.po || '';
+    $('#f-client').value = edit.clientId || '';
+    onClientChange();
+    $('#f-project').value = edit.projectId || '';
+    loadReceivingPMDropdown(edit.clientId ? parseInt(edit.clientId) : null, edit.pmEmails || []);
+    $('#f-mfr').value = edit.manufacturer || '';
+    $('#f-cartons').value = edit.cartons || '';
+    $('#f-date').value = edit.receivedDate || new Date().toISOString().split('T')[0];
+    $('#f-status').value = edit.status || 'received';
+
+    var locSel = $('#f-location');
+    if (locSel) {
+        locSel.innerHTML = buildLocationOptions(edit.location || '');
+        if (edit.location) locSel.value = edit.location;
+    }
+
     openModal('scan');
 }
 
-function loadReceivingPMDropdown(clientId, selectedName) {
+function loadReceivingPMDropdown(clientId, selectedEmails) {
     var sel = $('#f-pm');
     if (!sel) return;
-    sel.innerHTML = '<option value="">Select PM...</option>';
+    sel.innerHTML = '';
     var client = clients.find(function(c) { return c.id === clientId; });
     var pms = client ? getClientPMs(client) : [];
     pms.forEach(function(pm) {
         var opt = document.createElement('option');
-        opt.value = pm.name || '';
+        opt.value = pm.email || pm.name || '';
         opt.textContent = pm.email ? (pm.name + ' — ' + pm.email) : (pm.name || '');
         opt.dataset.email = pm.email || '';
+        if (Array.isArray(selectedEmails) && pm.email && selectedEmails.includes(pm.email)) opt.selected = true;
         sel.appendChild(opt);
     });
-    if (selectedName) sel.value = selectedName;
 }
 
 function onClientChange() {
     const c = +$('#f-client').value;
     const p = c ? projects.filter(x => x.clientId === c) : projects;
     $('#f-project').innerHTML = '<option value="">Select...</option><option value="_unknown">🚩 Unknown</option>' + p.map(x => `<option value="${x.id}">${x.name}</option>`).join('');
-    if (c) loadReceivingPMDropdown(c);
+    if (c) loadReceivingPMDropdown(c, []);
 }
 
 async function submitScan() {
-    if (!currentScan) return;
     const po = $('#f-po').value.trim(), cid = +$('#f-client').value, pid = $('#f-project').value;
-    const pmName = $('#f-pm') ? $('#f-pm').value : '';
+    const pmEmails = $('#f-pm') ? Array.from($('#f-pm').selectedOptions || []).map(o => o.dataset.email || o.value).filter(Boolean) : [];
     if (!po) return toast('Enter PO #');
     if (!cid) return toast('Select client');
     if (!pid) return toast('Select project');
+
+    if (currentScanSource === 'cam' && currentCamScanId) {
+        updateCamEdit(currentCamScanId, 'po', po);
+        updateCamEdit(currentCamScanId, 'clientId', cid);
+        updateCamEdit(currentCamScanId, 'projectId', pid);
+        updateCamEdit(currentCamScanId, 'pmEmails', pmEmails);
+        updateCamEdit(currentCamScanId, 'manufacturer', $('#f-mfr').value.trim());
+        updateCamEdit(currentCamScanId, 'cartons', $('#f-cartons').value.trim());
+        updateCamEdit(currentCamScanId, 'location', $('#f-location').value || '');
+        updateCamEdit(currentCamScanId, 'receivedDate', $('#f-date').value || null);
+        updateCamEdit(currentCamScanId, 'status', $('#f-status').value);
+        closeModal('scan');
+        await processCamScan(currentCamScanId);
+        return;
+    }
+    if (!currentScan) return;
 
     // Create shipment in Supabase
     const shipmentData = {
@@ -1568,7 +1657,7 @@ async function submitScan() {
         expected_date: null,
         received_date: $('#f-date').value || null,
         status: $('#f-status').value,
-        sortly: $('#f-location').value.trim() || '',
+        sortly: ($('#f-location').value || '').trim() || '',
         inventory_status: 'in-warehouse'
     };
 
@@ -1598,7 +1687,7 @@ async function submitScan() {
     render();
     closeModal('scan');
     toast('Shipment added!');
-    try { sendReceivingEmail(cid, pmName, po, pid === '_unknown' ? null : +pid); } catch(e) {}
+    try { sendReceivingEmailMulti(cid, pmEmails, po, pid === '_unknown' ? null : +pid); } catch(e) {}
     switchTab('shipments', $$('.header-tab')[1]);
 }
 
@@ -1872,6 +1961,7 @@ function openShipmentPanel(shipId) {
     $('#panel-subtitle').textContent = 'PO: ' + s.po;
     $('#panel-tabs').style.display = 'none';
     let h = '<div style="margin-bottom:12px;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.5px">DETAILS</div>';
+    const locOpts = buildLocationOptions(s.location || '');
     // Client - editable dropdown
     h += '<div class="panel-field"><div class="panel-field-label">Client</div><div class="panel-field-value"><select class="form-select" onchange="updateShipmentField('+s.id+',\'clientId\',+this.value)" style="max-width:220px">';
     h += '<option value="">Select...</option>';
@@ -1884,8 +1974,8 @@ function openShipmentPanel(shipId) {
     h += '</select></div></div>';
     // Manufacturer - editable text
     h += '<div class="panel-field"><div class="panel-field-label">Manufacturer</div><div class="panel-field-value"><input type="text" class="form-input" value="'+(s.mfr||'')+'" onchange="updateShipmentField('+s.id+',\'mfr\',this.value)" style="max-width:220px"></div></div>';
-    // Location - searchable autocomplete
-    h += '<div class="panel-field"><div class="panel-field-label">Location</div><div class="panel-field-value"><div style="position:relative;max-width:220px"><input type="text" class="form-input loc-autocomplete" id="ship-loc-'+s.id+'" value="'+(s.location||'')+'" placeholder="Select location..." oninput="showLocSuggestions(this,'+s.id+')" onfocus="focusLocInput(this,'+s.id+')" onblur="blurLocInput(this,'+s.id+')" onchange="updateShipmentLocation('+s.id+',this.value)" placeholder="e.g. A1-01" autocomplete="off"><div class="loc-suggestions" id="loc-sug-'+s.id+'" style="display:none"></div></div></div></div>';
+    // Location - dropdown
+    h += '<div class="panel-field"><div class="panel-field-label">Location</div><div class="panel-field-value"><select class="form-select" onchange="onShipmentLocationChange('+s.id+',this)" style="max-width:220px">' + locOpts + '</select></div></div>';
     // Status - editable dropdown
     h += '<div class="panel-field"><div class="panel-field-label">Status</div><div class="panel-field-value"><select class="form-select" onchange="updateShipmentField('+s.id+',\'status\',this.value)" style="max-width:220px">';
     h += '<option value="received"'+(s.status==='received'?' selected':'')+'>Received</option>';
@@ -1953,6 +2043,54 @@ function getKnownLocations() {
     var locs = new Set();
     shipments.forEach(function(s){ if(s.location && s.location.trim()) locs.add(s.location.trim()); });
     return Array.from(locs).sort();
+}
+
+function buildLocationOptions(selected) {
+    var opts = '<option value="">Select...</option>';
+    var locs = getKnownLocations();
+    if (selected && !locs.some(function(l){ return l === selected; })) {
+        locs = [selected].concat(locs);
+    }
+    locs.forEach(function(l) {
+        var safe = escapeHtml(l);
+        opts += '<option value="' + safe + '"' + (selected && l === selected ? ' selected' : '') + '>' + safe + '</option>';
+    });
+    opts += '<option value="__custom__">Other…</option>';
+    return opts;
+}
+
+function normalizeLocationSelect(selectEl) {
+    var val = selectEl.value || '';
+    if (val === '__custom__') {
+        var custom = prompt('Enter location');
+        if (custom && custom.trim()) {
+            var clean = custom.trim();
+            var opt = document.createElement('option');
+            opt.value = clean;
+            opt.textContent = clean;
+            selectEl.insertBefore(opt, selectEl.querySelector('option[value="__custom__"]'));
+            selectEl.value = clean;
+            val = clean;
+        } else {
+            selectEl.value = '';
+            val = '';
+        }
+    }
+    return val;
+}
+
+function onFormLocationChange(selectEl) {
+    normalizeLocationSelect(selectEl);
+}
+
+function onShipmentLocationChange(shipId, selectEl) {
+    var val = normalizeLocationSelect(selectEl);
+    updateShipmentLocation(shipId, val);
+}
+
+function updateCamLocation(id, selectEl) {
+    var val = normalizeLocationSelect(selectEl);
+    updateCamEdit(id, 'location', val);
 }
 
 function showLocSuggestions(input, shipId) {
