@@ -762,7 +762,10 @@ async function sbFetch(table, method = 'GET', query = '', data = null, headers =
     if (_authAccessToken && isTokenExpired(_authAccessToken)) {
         console.warn('[AUTH] Access token expired in sbFetch — refreshing');
         _authAccessToken = null;
-        await tryRefreshSession();
+        await ensureAccessToken();
+    }
+    if (!_authAccessToken) {
+        await ensureAccessToken();
     }
     const options = {
         method,
@@ -3964,6 +3967,50 @@ async function safeGetSession() {
         return { data: { session: null }, error: err };
     }
 }
+async function manualRefreshSession() {
+    try {
+        const stored = getStoredAuth();
+        const refreshToken = stored && stored.refresh_token ? stored.refresh_token : null;
+        if (!refreshToken) return null;
+        const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+            method: 'POST',
+            headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: refreshToken })
+        });
+        if (!res.ok) {
+            const txt = await res.text().catch(() => '');
+            console.warn('[AUTH] manual refresh failed:', res.status, txt);
+            return null;
+        }
+        const data = await res.json();
+        if (data && data.access_token) {
+            _authAccessToken = data.access_token;
+            const expires_at = data.expires_at || (data.expires_in ? Math.floor(Date.now()/1000) + data.expires_in : null);
+            localStorage.setItem(ALT_AUTH_KEY, JSON.stringify({
+                access_token: data.access_token,
+                refresh_token: data.refresh_token || refreshToken,
+                expires_at
+            }));
+            return data;
+        }
+    } catch (err) {
+        if (isAbortError(err)) console.warn('[AUTH] manual refresh aborted (safe to ignore)');
+        else console.error('[AUTH] manual refresh error:', err);
+    }
+    return null;
+}
+async function ensureAccessToken() {
+    if (_authAccessToken && !isTokenExpired(_authAccessToken)) return true;
+    const stored = getStoredAuth();
+    if (stored && stored.access_token && !isTokenExpired(stored.access_token)) {
+        _authAccessToken = stored.access_token;
+        return true;
+    }
+    const manual = await manualRefreshSession();
+    if (manual && manual.access_token) return true;
+    const supa = await tryRefreshSession();
+    return !!supa;
+}
 async function applyHashSessionIfPresent() {
     const tokens = getHashTokens();
     if (!tokens || !tokens.access_token) return false;
@@ -3999,16 +4046,26 @@ async function tryRefreshSession() {
         const { data, error } = await _supabaseAuth.auth.refreshSession();
         if (error) {
             console.warn('[AUTH] refreshSession error:', error.message || error);
-            return null;
+            // fallback to manual refresh
+            return await manualRefreshSession();
         }
         if (data && data.session) {
             _authAccessToken = data.session.access_token;
             _lastAuthAt = Date.now();
+            // persist a fallback auth token
+            try {
+                localStorage.setItem(ALT_AUTH_KEY, JSON.stringify({
+                    access_token: data.session.access_token,
+                    refresh_token: data.session.refresh_token || '',
+                    expires_at: data.session.expires_at || null
+                }));
+            } catch(e) {}
             return data.session;
         }
     } catch (err) {
         if (isAbortError(err)) {
             console.warn('[AUTH] refreshSession aborted (safe to ignore)');
+            return await manualRefreshSession();
         } else {
             console.error('[AUTH] refreshSession error:', err);
         }
@@ -4252,6 +4309,21 @@ async function initAuth() {
         // Apply hash tokens immediately for faster auth
         await applyHashSessionIfPresent();
 
+        // If we already have a local token, use it immediately (no Supabase delay)
+        if (hasLocalAuth()) {
+            await ensureAccessToken();
+            hideLoginScreen();
+            addSignOutButton();
+            if (!window._crmDataLoaded) {
+                window._crmDataLoaded = true;
+                try { await load(); render(); } catch(e) { console.error('[AUTH] load/render error:', e); }
+            }
+            // Background refresh (non-blocking)
+            tryRefreshSession();
+            _authInitRunning = false;
+            return;
+        }
+
         // First attempt at session restore
         await restoreSessionIfPossible();
         var { data: { session } } = await safeGetSession();
@@ -4270,7 +4342,7 @@ async function initAuth() {
             console.log('[AUTH] Session found for:', session.user.email);
             _lastAuthAt = Date.now();
             await handleAuthSession(session);
-        } else if (hasLocalAuth() || authPendingToken) {
+        } else if (authPendingToken) {
             console.log('[AUTH] No session yet, but local auth exists — staying in app');
             hideLoginScreen();
             addSignOutButton();
