@@ -900,8 +900,7 @@ const ENABLE_CAMSCANNER_API = false;
 
 document.addEventListener('DOMContentLoaded', async () => {
     loadCamScanState();
-    await load();
-    render();
+    // Don't call load() here — initAuth() will call load() after session is established.
     if (ENABLE_CAMSCANNER_API) loadCamScannerDocs();
 });
 
@@ -4033,11 +4032,11 @@ async function handleAuthSession(session) {
         // Add sign-out button
         addSignOutButton();
         
-        // If data was loaded with anon key (401), refresh data in-place (no full reload)
+        // Load CRM data after auth is confirmed
         if (!window._crmDataLoaded) {
-            console.log('[AUTH] First sign-in, refreshing data with auth token');
+            console.log('[AUTH] Loading CRM data with auth token');
             window._crmDataLoaded = true;
-            try { await load(); render(); } catch(e) {}
+            try { await load(); render(); } catch(e) { console.error('[AUTH] load/render error:', e); }
         }
         
     } catch (err) {
