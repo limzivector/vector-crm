@@ -721,10 +721,6 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
 <script>
 // Supabase Configuration
 const SUPABASE_URL = 'https://ilbrtyoeqrbkbbotoopu.supabase.co';
-// Clean OAuth hash if present to avoid auth/session glitches
-if (window.location.hash && window.location.hash.includes('access_token')) {
-    history.replaceState({}, '', window.location.pathname + window.location.search);
-}
 let camScans = [], camScansLoaded = false;
 let scanInbox = [];
     let camScanEdits = {}, camScanProcessed = {};
@@ -3864,7 +3860,9 @@ document.addEventListener('DOMContentLoaded', () => { initPortal(); });
 
 <script>
 // ========== AUTH SYSTEM ==========
-const _supabaseAuth = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const _supabaseAuth = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+});
 
 function showLoginScreen() {
     document.getElementById('auth-overlay').style.display = 'flex';
@@ -3980,12 +3978,11 @@ async function handleAuthSession(session) {
         // Add sign-out button
         addSignOutButton();
         
-        // If data was already loaded with anon key (401), reload to use auth token
+        // If data was loaded with anon key (401), refresh data in-place (no full reload)
         if (!window._crmDataLoaded) {
-            console.log('[AUTH] First sign-in, reloading to fetch data with auth token');
+            console.log('[AUTH] First sign-in, refreshing data with auth token');
             window._crmDataLoaded = true;
-            location.reload();
-            return;
+            try { await load(); render(); } catch(e) {}
         }
         
     } catch (err) {
