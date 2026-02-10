@@ -4087,9 +4087,8 @@ function sendReceivingEmail(clientId, pmName, po, projectId, details) {
   var pms = typeof getClientPMs === "function" ? getClientPMs(client) : [];
   var pm = pmName ? pms.find(function(x){ return x.name === pmName; }) : null;
   var cc = pm && pm.email ? pm.email : "";
-  var proj = projectId ? projects.find(function(p){ return p.id === projectId; }) : null;
-  var subject = "Receiving: " + (po || "");
-  var body = buildReceivingEmailBody(po, proj, details);
+  var subject = buildReceivingEmailSubject(po);
+  var body = buildReceivingEmailBody(po, details);
   var url = "mailto:" + encodeURIComponent(client.email) +
     (cc ? ("?cc=" + encodeURIComponent(cc)) : "?cc=") +
     "&subject=" + encodeURIComponent(subject) +
@@ -4099,9 +4098,8 @@ function sendReceivingEmail(clientId, pmName, po, projectId, details) {
 function sendReceivingEmailMulti(clientId, pmEmails, po, projectId, details) {
   var client = clients.find(function(c) { return c.id === clientId; });
   if (!client || !client.email) return;
-  var proj = projectId ? projects.find(function(p){ return p.id === projectId; }) : null;
-  var subject = "Receiving: " + (po || "");
-  var body = buildReceivingEmailBody(po, proj, details);
+  var subject = buildReceivingEmailSubject(po);
+  var body = buildReceivingEmailBody(po, details);
   var ccStr = (pmEmails || []).filter(Boolean).join(";");
   var url = "mailto:" + encodeURIComponent(client.email) +
     "?cc=" + encodeURIComponent(ccStr) +
@@ -4109,17 +4107,20 @@ function sendReceivingEmailMulti(clientId, pmEmails, po, projectId, details) {
     "&body=" + encodeURIComponent(body);
   window.open(url, "_blank");
 }
-function buildReceivingEmailBody(po, proj, details) {
+function buildReceivingEmailSubject(po) {
+  return "Shipment Received PO: " + (po || "");
+}
+function buildReceivingEmailBody(po, details) {
   var d = details || {};
+  var statusLabel = d.status === "received" ? "Complete" : "Incomplete";
   var lines = [];
-  lines.push("PO: " + (po || ""));
-  if (proj) lines.push("Project: " + proj.name);
-  if (d.manufacturer) lines.push("Manufacturer: " + d.manufacturer);
-  if (d.cartons) lines.push("Cartons/Pallets: " + d.cartons);
-  if (d.location) lines.push("Location: " + d.location);
-  if (d.receivedDate) lines.push("Received Date: " + d.receivedDate);
-  if (d.status) lines.push("Status: " + d.status);
-  if (d.pdfUrl) lines.push("PDF: " + d.pdfUrl);
+  lines.push("Hi, Your shipment under PO:" + (po || "") + " has been received.");
+  if (d.manufacturer) lines.push("📦 Manufacturer: " + d.manufacturer);
+  if (d.receivedDate) lines.push("📆 Received Date: " + d.receivedDate);
+  lines.push("Status (Complete or incomplete): " + statusLabel);
+  if (d.pdfUrl) lines.push("Packing Slip Link: " + d.pdfUrl);
+  lines.push("Thanks,");
+  lines.push("Warehouse Vector Installation Services");
   return lines.join("\\n");
 }
 function getCamScanForShipment(s) {
