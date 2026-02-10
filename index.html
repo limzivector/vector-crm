@@ -3912,6 +3912,7 @@ let _authListenerAttached = false;
 let _authKeepAliveStarted = false;
 const _authWait = (ms) => new Promise(r => setTimeout(r, ms));
 const isAbortError = (err) => err && (err.name === 'AbortError' || /aborted/i.test(err.message));
+const ALT_AUTH_KEY = 'vector_auth';
 const hasLocalAuth = () => !!_authAccessToken || !!getStoredAuth();
 const getHashTokens = () => {
     try {
@@ -3941,6 +3942,11 @@ const isTokenExpired = (token, skewMs = 30000) => {
 };
 function getStoredAuth() {
     try {
+        const alt = localStorage.getItem(ALT_AUTH_KEY);
+        if (alt) {
+            const parsed = JSON.parse(alt);
+            if (parsed && parsed.access_token && parsed.refresh_token) return parsed;
+        }
         const key = `sb-${SUPABASE_REF}-auth-token`;
         const raw = localStorage.getItem(key);
         return raw ? JSON.parse(raw) : null;
@@ -3963,6 +3969,13 @@ async function applyHashSessionIfPresent() {
     if (!tokens || !tokens.access_token) return false;
     try {
         _authAccessToken = tokens.access_token;
+        // Store minimal session locally so we can refresh later even if supabase auth storage fails
+        const expires_at = tokens.expires_in ? Math.floor(Date.now()/1000) + tokens.expires_in : null;
+        localStorage.setItem(ALT_AUTH_KEY, JSON.stringify({
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token || '',
+            expires_at
+        }));
         if (tokens.refresh_token) {
             await _supabaseAuth.auth.setSession({
                 access_token: tokens.access_token,
@@ -4084,12 +4097,17 @@ async function signOutUser() {
     await _supabaseAuth.auth.signOut();
     _authAccessToken = null;
     _currentUser = null;
+    try { localStorage.removeItem(ALT_AUTH_KEY); } catch(e){}
     showLoginScreen(true);
     _manualSignOut = false;
 }
 
 async function handleAuthSession(session) {
-    if (!session) { showLoginScreen(); return; }
+    if (!session) {
+        if (hasLocalAuth()) { hideLoginScreen(); return; }
+        showLoginScreen();
+        return;
+    }
     if (_authHandling) {
         // Still update the token even if we skip the full flow
         _authAccessToken = session.access_token;
@@ -4256,14 +4274,12 @@ async function initAuth() {
             console.log('[AUTH] No session yet, but local auth exists — staying in app');
             hideLoginScreen();
             addSignOutButton();
-            // Attempt refresh before loading any data to avoid 401 spam
-            const refreshed = await tryRefreshSession();
-            if (refreshed) {
-                await handleAuthSession(refreshed);
-                _authInitRunning = false;
-                return;
+            if (!window._crmDataLoaded) {
+                window._crmDataLoaded = true;
+                try { await load(); render(); } catch(e) { console.error('[AUTH] load/render error:', e); }
             }
-            setTimeout(initAuth, AUTH_RETRY_MS);
+            // Background refresh only (don’t block UI)
+            tryRefreshSession();
             _authInitRunning = false;
             return;
         } else {
@@ -4336,6 +4352,8 @@ async function initAuth() {
                     if (!s && getStoredAuth()) {
                         console.log('[AUTH] Keep-alive: restoring session');
                         await restoreSessionIfPossible();
+                        // If still no session but we have local auth, keep UI alive
+                        if (!s && hasLocalAuth()) hideLoginScreen();
                     }
                 } catch (e) {
                     if (!isAbortError(e)) console.error('[AUTH] Keep-alive error:', e);
