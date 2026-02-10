@@ -721,6 +721,7 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
 <script>
 // Supabase Configuration
 const SUPABASE_URL = 'https://ilbrtyoeqrbkbbotoopu.supabase.co';
+const SUPABASE_REF = (SUPABASE_URL.split('//')[1] || '').split('.')[0];
 let camScans = [], camScansLoaded = false;
 let scanInbox = [];
     let camScanEdits = {}, camScanProcessed = {};
@@ -3863,6 +3864,28 @@ document.addEventListener('DOMContentLoaded', () => { initPortal(); });
 const _supabaseAuth = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
+let _manualSignOut = false;
+function getStoredAuth() {
+    try {
+        const key = `sb-${SUPABASE_REF}-auth-token`;
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+}
+async function restoreSessionIfPossible() {
+    const stored = getStoredAuth();
+    if (stored && stored.access_token && stored.refresh_token) {
+        try {
+            await _supabaseAuth.auth.setSession({ access_token: stored.access_token, refresh_token: stored.refresh_token });
+            const { data: { session } } = await _supabaseAuth.auth.getSession();
+            if (session) {
+                await handleAuthSession(session);
+                return true;
+            }
+        } catch (e) {}
+    }
+    return false;
+}
 
 function showLoginScreen() {
     document.getElementById('auth-overlay').style.display = 'flex';
@@ -3905,10 +3928,12 @@ async function signInWithMicrosoft() {
 }
 
 async function signOutUser() {
+    _manualSignOut = true;
     await _supabaseAuth.auth.signOut();
     _authAccessToken = null;
     _currentUser = null;
     showLoginScreen();
+    _manualSignOut = false;
 }
 
 async function handleAuthSession(session) {
@@ -4025,8 +4050,12 @@ async function initAuth() {
             console.log('[AUTH] Session found for:', session.user.email);
             await handleAuthSession(session);
         } else {
-            console.log('[AUTH] No session found, showing login');
-            showLoginScreen();
+            // Try restoring from localStorage before showing login
+            const restored = await restoreSessionIfPossible();
+            if (!restored) {
+                console.log('[AUTH] No session found, showing login');
+                showLoginScreen();
+            }
         }
         
         // Listen for auth changes (token refresh, sign in/out)
@@ -4035,7 +4064,8 @@ async function initAuth() {
             if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
                 await handleAuthSession(session);
             } else if (event === 'SIGNED_OUT') {
-                // Guard against false sign-outs by rechecking session
+                if (_manualSignOut) { showLoginScreen(); return; }
+                // Guard against false sign-outs by rechecking session or restoring
                 try {
                     var { data: { session: s2 } } = await _supabaseAuth.auth.getSession();
                     if (s2) {
@@ -4043,7 +4073,8 @@ async function initAuth() {
                         return;
                     }
                 } catch(e) {}
-                showLoginScreen();
+                const restored = await restoreSessionIfPossible();
+                if (!restored) showLoginScreen();
             }
         });
     } catch (err) {
