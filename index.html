@@ -4140,7 +4140,7 @@ function buildReceivingEmailBody(po, details) {
   if (d.pdfUrl) lines.push("Packing Slip Link: " + d.pdfUrl);
   lines.push("Thanks,");
   lines.push("Warehouse Vector Installation Services");
-  return lines.join("\\n");
+  return lines.join("\n");
 }
 function getCamScanForShipment(s) {
   return (camScans || []).find(function(sc) { return sc.po === s.subitem || sc.po === s.po; });
