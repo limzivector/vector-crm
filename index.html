@@ -940,6 +940,11 @@ async function load() {
     const sbStaffRoles = await sbFetch('staff_roles', 'GET'); const sbStaffPerms = await sbFetch('staff_permissions', 'GET'); const sbUsers = await sbFetch('users', 'GET'); const sbIntegrations = await sbFetch('integrations', 'GET');
 
     if (sbClients === null) {
+        // If auth failed, try refresh and retry once
+        if (sbLastError && sbLastError.status === 401) {
+            const refreshed = await tryRefreshSession();
+            if (refreshed) return await load();
+        }
         // Supabase failed (offline/RLS). Fallback to cached local data if available.
         loadLocalFallback();
         return;
@@ -3908,6 +3913,17 @@ let _authKeepAliveStarted = false;
 const _authWait = (ms) => new Promise(r => setTimeout(r, ms));
 const isAbortError = (err) => err && (err.name === 'AbortError' || /aborted/i.test(err.message));
 const hasLocalAuth = () => !!_authAccessToken || !!getStoredAuth();
+const getHashTokens = () => {
+    try {
+        if (!window.location.hash) return null;
+        const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+        const access_token = params.get('access_token');
+        const refresh_token = params.get('refresh_token');
+        const expires_in = parseInt(params.get('expires_in') || '0', 10);
+        if (!access_token) return null;
+        return { access_token, refresh_token, expires_in };
+    } catch(e) { return null; }
+};
 const decodeJwtPayload = (token) => {
     try {
         const parts = token.split('.');
@@ -3940,6 +3956,29 @@ async function safeGetSession() {
         }
         console.error('[AUTH] getSession error:', err);
         return { data: { session: null }, error: err };
+    }
+}
+async function applyHashSessionIfPresent() {
+    const tokens = getHashTokens();
+    if (!tokens || !tokens.access_token) return false;
+    try {
+        _authAccessToken = tokens.access_token;
+        if (tokens.refresh_token) {
+            await _supabaseAuth.auth.setSession({
+                access_token: tokens.access_token,
+                refresh_token: tokens.refresh_token
+            });
+        }
+        // Remove hash ASAP to prevent reprocessing
+        history.replaceState({}, '', window.location.pathname + window.location.search);
+        return true;
+    } catch (err) {
+        if (isAbortError(err)) {
+            console.warn('[AUTH] applyHashSession aborted (safe to ignore)');
+            return true; // We still set _authAccessToken for REST calls
+        }
+        console.error('[AUTH] applyHashSession error:', err);
+        return false;
     }
 }
 async function tryRefreshSession() {
@@ -4192,6 +4231,8 @@ async function initAuth() {
     try {
         // Detect if URL has an OAuth callback token
         authPendingToken = /access_token=|code=/.test(location.hash);
+        // Apply hash tokens immediately for faster auth
+        await applyHashSessionIfPresent();
 
         // First attempt at session restore
         await restoreSessionIfPossible();
