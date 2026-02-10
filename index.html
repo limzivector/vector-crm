@@ -4075,7 +4075,7 @@ async function initAuth() {
     if (_authAccessToken) {
         hideLoginScreen();
         addSignOutButton();
-        window._crmDataLoaded = true;
+        // Don't set _crmDataLoaded here — load() hasn't run yet
     }
     console.log('[AUTH] initAuth called');
     try {
