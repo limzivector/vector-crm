@@ -126,10 +126,13 @@
         .team-item.assigned .card-avatar { background: var(--green); color: #fff; }
         .team-check { width: 20px; height: 20px; border: 2px solid var(--border); border-radius: 4px; margin-left: auto; display: flex; align-items: center; justify-content: center; }
         .team-item.assigned .team-check { background: var(--green); border-color: var(--green); }
-        .doc-item { display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--gray-lt); border-radius: 6px; margin-bottom: 8px; cursor: pointer; }
+        .doc-item { display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--gray-lt); border-radius: 6px; margin-bottom: 8px; }
         .doc-item:hover { background: #e8e9eb; }
         .doc-status { font-size: 12px; color: var(--muted); }
         .doc-status.has { color: var(--green); }
+        .doc-actions { margin-left: auto; display: flex; gap: 8px; }
+        .doc-actions .btn { padding: 4px 10px; font-size: 11px; }
+        .doc-meta { font-size: 12px; color: var(--muted); }
         .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 200; }
         .modal-bg.open { display: flex; }
         .modal { background: var(--card); border-radius: 12px; width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; }
@@ -2126,8 +2129,27 @@ function openPanel(pid) {
     }).join('') : '<div style="color:var(--muted);padding:12px;text-align:center">No punchlist items yet</div>';
 
     const docs = currentProject.docs || {};
-    const dt2 = [{k:'workOrder',n:'Work Order',i:'📋'},{k:'deliveryReceipt',n:'Delivery Receipt',i:'🚚'},{k:'packingSlips',n:'Packing Slips',i:'📄'},{k:'photos',n:'Photos',i:'📷'}];
-    $('#panel-docs').innerHTML = dt2.map(d => `<div class="doc-item" onclick="uploadDoc('${d.k}')"><div style="font-size:20px">${d.i}</div><div><div style="font-weight:500">${d.n}</div><div class="doc-status ${docs[d.k] ? 'has' : ''}">${docs[d.k] ? '✓ Uploaded' : 'Not uploaded'}</div></div></div>`).join('');
+    const dt2 = [
+        {k:'workOrder',n:'Work Order',i:'📋'},
+        {k:'deliveryReceipt',n:'Delivery Receipt',i:'🚚'},
+        {k:'drawing',n:'Drawing',i:'📐'}
+    ];
+    $('#panel-docs').innerHTML = dt2.map(d => {
+        const entry = normalizeDocEntry(docs[d.k]);
+        const hasUrl = entry && entry.url;
+        const fileName = entry && entry.name ? entry.name : (hasUrl ? 'View file' : 'No file uploaded');
+        return `<div class="doc-item">
+            <div style="font-size:20px">${d.i}</div>
+            <div>
+                <div style="font-weight:500">${d.n}</div>
+                <div class="doc-meta">${escapeHtml(fileName)}</div>
+            </div>
+            <div class="doc-actions">
+                <button class="btn btn-outline" onclick="uploadDoc('${d.k}')">Upload</button>
+                ${hasUrl ? `<a class="btn btn-primary" href="${escapeHtml(entry.url)}" target="_blank" rel="noopener">Download</a>` : ''}
+            </div>
+        </div>`;
+    }).join('');
 
     const panelBody = document.querySelector('.panel-body');
     const existingActionBtn = panelBody?.querySelector('.panel-action-btn');
@@ -2416,15 +2438,57 @@ async function toggleTeam(pid) {
     openPanel(currentProject.id);
     renderCalendar();
 }
-async function uploadDoc(k) {
-    if (!currentProject) return;
-    if (!currentProject.docs) currentProject.docs = {};
-    currentProject.docs[k] = true;
+const PROJECT_DOC_BUCKET = 'project-docs';
+const DOC_ALLOWED_EXT = ['pdf','doc','docx'];
 
+function normalizeDocEntry(entry) {
+    if (!entry) return null;
+    if (typeof entry === 'string') return { url: entry };
+    if (entry === true) return { name: 'Uploaded' };
+    if (typeof entry === 'object') return entry;
+    return null;
+}
+
+function isAllowedDoc(file) {
+    const name = (file && file.name) ? file.name.toLowerCase() : '';
+    const ext = name.split('.').pop();
+    if (DOC_ALLOWED_EXT.includes(ext)) return true;
+    const type = (file && file.type) ? file.type.toLowerCase() : '';
+    return type.includes('pdf') || type.includes('msword') || type.includes('wordprocessingml');
+}
+
+function sanitizeFilename(name) {
+    return name.replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+async function uploadProjectDoc(k, file) {
+    if (!currentProject) return;
+    if (!isAllowedDoc(file)) return toast('Only PDF/DOC/DOCX allowed');
+    const safeName = sanitizeFilename(file.name);
+    const path = `project_${currentProject.id}/${k}/${Date.now()}_${safeName}`;
+    const { error: upErr } = await _supabaseAuth.storage.from(PROJECT_DOC_BUCKET).upload(path, file, { upsert: true });
+    if (upErr) { console.error(upErr); return toast('Upload failed. Check storage bucket'); }
+    const pub = _supabaseAuth.storage.from(PROJECT_DOC_BUCKET).getPublicUrl(path);
+    const url = (pub && pub.data && pub.data.publicUrl) ? pub.data.publicUrl : '';
+    if (!currentProject.docs) currentProject.docs = {};
+    currentProject.docs[k] = { name: file.name, url: url, path: path, uploadedAt: new Date().toISOString() };
     await sbUpdate('projects', currentProject.id, { docs: currentProject.docs });
     saveLocal();
     openPanel(currentProject.id);
     toast('Uploaded');
+}
+
+async function uploadDoc(k) {
+    if (!currentProject) return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    input.onchange = async () => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        await uploadProjectDoc(k, file);
+    };
+    input.click();
 }
 function notifyTeam() { if (!currentProject?.team?.length) return toast('No team'); const m = people.filter(p => currentProject.team.includes(p.id)); window.open(`mailto:${m.map(p=>p.email).join(';')}?subject=Install: ${currentProject.name}`, '_blank'); }
 
