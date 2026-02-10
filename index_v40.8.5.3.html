@@ -382,6 +382,35 @@
     .sign-out-btn:hover { background: rgba(255,0,0,0.15); border-color: rgba(255,0,0,0.3); color: #ff6b6b; }
     .user-info { display: flex; align-items: center; gap: 8px; color: rgba(255,255,255,0.7); font-size: 13px; }
   
+    .mobile-only { display: none; }
+    .mobile-subtabs { display: none; gap: 6px; margin-top: 10px; background: #eef1f5; padding: 4px; border-radius: 12px; }
+    .mobile-subtabs .seg-btn { flex:1; border:none; background:transparent; padding:8px 10px; border-radius:10px; font-size:12px; font-weight:600; color:var(--text2); cursor:pointer; }
+    .mobile-subtabs .seg-btn.active { background:#fff; color:var(--text); box-shadow:0 1px 3px rgba(0,0,0,0.08); }
+    .mobile-subtabs .seg-btn .badge { margin-left:6px; background:var(--red); color:#fff; font-size:10px; padding:2px 6px; border-radius:10px; display:inline-block; }
+    .mobile-nav { display:none; position:fixed; bottom:0; left:0; right:0; height:64px; background:#fff; border-top:1px solid var(--border); z-index:9999; align-items:center; padding-bottom:env(safe-area-inset-bottom, 0); }
+    .mobile-nav .mobile-tab { flex:1; background:none; border:none; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; font-size:11px; color:var(--text2); position:relative; cursor:pointer; padding:6px 0; }
+    .mobile-nav .mobile-icon { font-size:18px; line-height:1; }
+    .mobile-nav .mobile-tab.active { color:var(--blue); }
+    .mobile-nav .mobile-badge { position:absolute; top:6px; right:24px; background:var(--red); color:#fff; font-size:10px; padding:2px 6px; border-radius:10px; display:none; }
+    .dispatch-grid { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+    .pm-toggle { display:flex; align-items:center; gap:10px; font-size:12px; color:var(--text2); }
+    .pm-toggle input { width:16px; height:16px; }
+
+    @media (max-width: 900px) {
+      aside.sidebar { display:none !important; }
+      main.main { position:relative !important; left:0 !important; right:0 !important; margin-left:0 !important; width:100% !important; padding-bottom:84px; }
+      .header { flex-direction:column; align-items:flex-start; gap:10px; padding:12px; }
+      .header-left { width:100%; }
+      .header-tabs.desktop-only { display:none; }
+      .mobile-only { display:flex; }
+      .mobile-subtabs { display:flex; }
+      .content { padding:12px; }
+      .card-grid { grid-template-columns:1fr; gap:12px; }
+      .mobile-nav { display:flex; }
+      .dispatch-grid { display:block; }
+      .settings-tabs { display:none; }
+      .panel { width:100%; }
+    }
 
 /* V38 layout fix */
 aside.sidebar { position: fixed !important; top: 0; left: 0; bottom: 0; width: 240px; z-index: 2; overflow-y: auto; }
@@ -490,10 +519,14 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
                 <header class="header">
                     <div class="header-left">
                         <h1 class="header-title">Receiving</h1>
-                        <div class="header-tabs">
-                            <div class="header-tab active" onclick="switchTab('scans', this)">Raw Scans</div>
-                            <div class="header-tab" onclick="switchTab('shipments', this)">Shipments</div>
-                        
+                        <div class="header-tabs desktop-only">
+                            <div class="header-tab active" data-tab="scans" onclick="switchTab('scans', this)">Raw Scans</div>
+                            <div class="header-tab" data-tab="shipments" onclick="switchTab('shipments', this)">Shipments</div>
+                        </div>
+                        <div class="mobile-subtabs mobile-only mobile-receiving-tabs">
+                            <button class="seg-btn active" data-tab="scans" onclick="mobileReceivingTab('scans')">Raw Scans <span class="badge mobile-raw-badge">0</span></button>
+                            <button class="seg-btn" data-tab="shipments" onclick="mobileReceivingTab('shipments')">Shipments</button>
+                            <button class="seg-btn" data-tab="warehouse" onclick="mobileReceivingTab('warehouse')">Warehouse</button>
                         </div>
                     </div>
                     <button class="btn btn-outline" onclick="openCameraUpload()">📷 Upload Scan</button>
@@ -525,11 +558,27 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
                 <div class="content"><div class="card-grid" id="projects-list"></div></div>
             </div>
             <div id="view-people" class="view">
-                <header class="header"><h1 class="header-title">People</h1><button class="btn btn-primary" onclick="openModal('person')">+ Add Person</button></header>
+                <header class="header">
+                    <div class="header-left"><h1 class="header-title">People</h1></div>
+                    <div class="mobile-subtabs mobile-only mobile-settings-tabs">
+                        <button class="seg-btn active" data-tab="people" onclick="mobileSettingsTab('people')">People</button>
+                        <button class="seg-btn" data-tab="clients" onclick="mobileSettingsTab('clients')">Clients</button>
+                        <button class="seg-btn" data-tab="staff" onclick="mobileSettingsTab('staff')">My Staff</button>
+                    </div>
+                    <button class="btn btn-primary" onclick="openModal('person')">+ Add Person</button>
+                </header>
                 <div class="content"><div class="card-grid" id="people-list"></div></div>
             </div>
             <div id="view-clients" class="view">
-                <header class="header"><h1 class="header-title">Clients</h1><button class="btn btn-primary" onclick="openModal('client')">+ New Client</button></header>
+                <header class="header">
+                    <div class="header-left"><h1 class="header-title">Clients</h1></div>
+                    <div class="mobile-subtabs mobile-only mobile-settings-tabs">
+                        <button class="seg-btn" data-tab="people" onclick="mobileSettingsTab('people')">People</button>
+                        <button class="seg-btn active" data-tab="clients" onclick="mobileSettingsTab('clients')">Clients</button>
+                        <button class="seg-btn" data-tab="staff" onclick="mobileSettingsTab('staff')">My Staff</button>
+                    </div>
+                    <button class="btn btn-primary" onclick="openModal('client')">+ New Client</button>
+                </header>
                 <div class="content"><div style="padding:12px;display:flex;justify-content:flex-end"><button class="btn btn-primary" onclick="openClientPanel(0)" style="font-size:13px">+ Add Client</button></div>
 <div class="card-grid" id="clients-list"></div></div>
             </div>
@@ -538,10 +587,14 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
                     <div class="header-left">
                         <h1 class="header-title">Dispatch</h1>
                     </div>
+                    <div class="mobile-subtabs mobile-only mobile-dispatch-tabs">
+                        <button class="seg-btn active" data-tab="prepare" onclick="mobileDispatchTab('prepare')">Prepare</button>
+                        <button class="seg-btn" data-tab="history" onclick="mobileDispatchTab('history')">History</button>
+                    </div>
                 </header>
                 <div class="content">
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
-                        <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:20px">
+                    <div class="dispatch-grid">
+                        <div id="dispatch-prepare" style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:20px">
                             <h3 style="margin-bottom:16px;font-weight:600">Prepare Dispatch</h3>
                             <div class="form-group">
                                 <label class="form-label">Search by PO # or Project Name <span class="req">*</span></label>
@@ -611,21 +664,29 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
                             </div>
                             <button class="btn btn-primary" style="width:100%" onclick="submitLoadingSheet()">Submit Dispatch</button>
                         </div>
-                        <div>
-                            <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:20px">
+                        <div id="dispatch-history" style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:20px">
                                 <h3 style="margin-bottom:16px;font-weight:600">Dispatch History</h3>
                                 <div class="form-group">
                                     <input type="text" class="form-input" id="ls-history-search" placeholder="Search history by PO or project..." oninput="renderLoadingHistory()">
                                 </div>
                                 <div id="ls-history" style="max-height:600px;overflow-y:auto"></div>
                                 <div id="d-history" style="max-height:400px;overflow-y:auto;margin-top:16px"></div>
-                            </div>
                         </div>
                     </div>
                 </div>
             </div>
             <div id="view-warehouse" class="view">
-                <header class="header"><div class="header-left"><h1 class="header-title">Warehouse</h1></div><button class="btn btn-primary" onclick="openItemModal(null)">+ Add Item</button></header>
+                <header class="header">
+                    <div class="header-left">
+                        <h1 class="header-title">Warehouse</h1>
+                        <div class="mobile-subtabs mobile-only mobile-receiving-tabs">
+                            <button class="seg-btn" data-tab="scans" onclick="mobileReceivingTab('scans')">Raw Scans <span class="badge mobile-raw-badge">0</span></button>
+                            <button class="seg-btn" data-tab="shipments" onclick="mobileReceivingTab('shipments')">Shipments</button>
+                            <button class="seg-btn active" data-tab="warehouse" onclick="mobileReceivingTab('warehouse')">Warehouse</button>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" onclick="openItemModal(null)">+ Add Item</button>
+                </header>
                 <div class="content">
                     <div id="wh-breadcrumb"></div>
                     <div id="wh-content"></div>
@@ -633,7 +694,14 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
             </div>
 
             <div id="view-settings" class="view">
-                <header class="header"><div class="header-left"><h1 class="header-title">Settings</h1></div></header>
+                <header class="header">
+                    <div class="header-left"><h1 class="header-title">Settings</h1></div>
+                    <div class="mobile-subtabs mobile-only mobile-settings-tabs">
+                        <button class="seg-btn" data-tab="people" onclick="mobileSettingsTab('people')">People</button>
+                        <button class="seg-btn" data-tab="clients" onclick="mobileSettingsTab('clients')">Clients</button>
+                        <button class="seg-btn active" data-tab="staff" onclick="mobileSettingsTab('staff')">My Staff</button>
+                    </div>
+                </header>
                 <div class="content">
                     <div class="settings-tabs">
                         <button class="settings-tab active" onclick="settingsTab('integrations',this)">Integrations</button>
@@ -667,6 +735,25 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
 <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-secondary" onclick="closeClientModal()">Cancel</button><button class="btn btn-primary" onclick="saveClientEdit()">Save</button></div>
 </div></div>
 </main>
+        <nav class="mobile-nav" id="mobile-nav">
+            <button class="mobile-tab active" data-view="receiving" onclick="mobileNav('receiving')">
+                <span class="mobile-icon">📥</span>
+                Receiving
+                <span class="mobile-badge" id="mobile-receiving-badge">0</span>
+            </button>
+            <button class="mobile-tab" data-view="dispatch" onclick="mobileNav('dispatch')">
+                <span class="mobile-icon">🚚</span>
+                Dispatch
+            </button>
+            <button class="mobile-tab" data-view="projects" onclick="mobileNav('projects')">
+                <span class="mobile-icon">📁</span>
+                Projects
+            </button>
+            <button class="mobile-tab" data-view="settings" onclick="mobileNav('settings')">
+                <span class="mobile-icon">⚙️</span>
+                Settings
+            </button>
+        </nav>
     </div>
     <div class="panel" id="panel">
         <div class="panel-header"><div><div class="panel-title" id="panel-title"></div><div class="panel-subtitle" id="panel-subtitle"></div></div><button class="panel-close" onclick="closePanel()">✕</button></div>
@@ -704,6 +791,13 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
                 <div class="form-row">
                     <div class="form-group"><label class="form-label">Received Date</label><input type="date" class="form-input" id="f-date"></div>
                     <div class="form-group"><label class="form-label">Complete</label><select class="form-select" id="f-status"><option value="received">Received</option><option value="not-received">Not Received</option></select></div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Send Email</label>
+                    <div class="pm-toggle">
+                        <input type="checkbox" id="f-send-email" checked>
+                        <span>Send email to client + selected PMs on submit</span>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('scan')">Cancel</button><button class="btn btn-primary" onclick="submitScan()">Submit</button></div>
@@ -1079,13 +1173,22 @@ async function loadScanInbox() {
     const rows = await sbFetch('scan_inbox', 'GET', '?order=created_at.desc');
     scanInbox = rows || [];
 }
-function render() { renderScans(); renderShipments(); renderCamScanInbox(); renderCalendar(); renderProjects(); renderPeople(); renderClients(); renderPunchlist(); renderDispatches(); renderLoadingSheet(); populateSelects(); updateBadges(); renderSettings(); }
+function render() { renderScans(); renderShipments(); renderCamScanInbox(); renderCalendar(); renderProjects(); renderPeople(); renderClients(); renderPunchlist(); renderDispatches(); renderLoadingSheet(); populateSelects(); updateBadges(); renderSettings(); updateMobileReceivingTabs(); updateMobileDispatchTabs(); updateMobileSettingsTabs(); }
 function updateBadges() {
     const pendingInbox = (scanInbox || []).filter(s => s.status === 'pending').length;
     const pendingLocal = scans.filter(s => s.status === 'pending').length;
     const p = USE_ONEDRIVE_SCAN_INBOX ? pendingInbox : (pendingInbox + pendingLocal);
     $('#nav-scans-badge').textContent = p;
     $('#nav-scans-badge').style.display = p > 0 ? 'inline' : 'none';
+    const mobileBadge = document.getElementById('mobile-receiving-badge');
+    if (mobileBadge) {
+        mobileBadge.textContent = p;
+        mobileBadge.style.display = p > 0 ? 'inline' : 'none';
+    }
+    document.querySelectorAll('.mobile-raw-badge').forEach(function(el) {
+        el.textContent = p;
+        el.style.display = p > 0 ? 'inline' : 'none';
+    });
 }
 
 function renderScans() {
@@ -1093,7 +1196,7 @@ function renderScans() {
   var inboxScans = (scanInbox || []).map(function(sc) {
     return {
       id: sc.id,
-      filename: sc.filename || sc.title || sc.email_subject || sc.po || "Scan",
+      filename: sc.filename || sc.title || sc.name || sc.file_name || sc.email_subject || sc.po || "Scan",
       timestamp: sc.received_at || sc.created_at || sc.timestamp || new Date().toISOString(),
       status: sc.status || "pending",
       source: sc.source || "onedrive",
@@ -1190,7 +1293,8 @@ function dismissCamScan(id) {
     renderCamScanInbox();
 }
 
-async function processCamScan(id) {
+async function processCamScan(id, opts) {
+    const skipEmail = opts && opts.skipEmail;
     const inboxRow = (scanInbox || []).find(x => String(x.id) === String(id));
     const sc = inboxRow || (camScans || []).find(x => x.id === id);
     if (!sc) return;
@@ -1239,17 +1343,19 @@ async function processCamScan(id) {
     saveCamScanState();
     renderShipments();
     renderCamScanInbox();
-    try {
-        var details = {
-            manufacturer: edit.manufacturer || '',
-            cartons: edit.cartons || '',
-            location: edit.location || '',
-            receivedDate: edit.receivedDate || '',
-            status: 'received',
-            pdfUrl: (sc.file_url || sc.pdf_url || '')
-        };
-        sendReceivingEmailMulti(clientId, edit.pmEmails || [], po, projectId || null, details);
-    } catch(e) {}
+    if (!skipEmail) {
+        try {
+            var details = {
+                manufacturer: edit.manufacturer || '',
+                cartons: edit.cartons || '',
+                location: edit.location || '',
+                receivedDate: edit.receivedDate || '',
+                status: 'received',
+                pdfUrl: (sc.file_url || sc.pdf_url || '')
+            };
+            sendReceivingEmailMulti(clientId, edit.pmEmails || [], po, projectId || null, details);
+        } catch(e) {}
+    }
     toast('CamScanner entry processed');
 }
 
@@ -1663,6 +1769,8 @@ function openRawScanForm(id, source) {
         locSel.innerHTML = buildLocationOptions(edit.location || '');
         if (edit.location) locSel.value = edit.location;
     }
+    const sendEl = document.getElementById('f-send-email');
+    if (sendEl) sendEl.checked = true;
 
     openModal('scan');
 }
@@ -1704,6 +1812,7 @@ function onClientChange() {
 async function submitScan() {
     const po = $('#f-po').value.trim(), cid = +$('#f-client').value, pid = $('#f-project-id').value;
     const pmEmails = Array.from(document.querySelectorAll('#f-pm-list input[type=checkbox]:checked')).map(el => el.dataset.email).filter(Boolean);
+    const sendEmail = $('#f-send-email') ? $('#f-send-email').checked : true;
     if (!po) return toast('Enter PO #');
     if (!cid) return toast('Select client');
     if (!pid) return toast('Select project');
@@ -1719,7 +1828,7 @@ async function submitScan() {
         updateCamEdit(currentCamScanId, 'receivedDate', $('#f-date').value || null);
         updateCamEdit(currentCamScanId, 'status', $('#f-status').value);
         closeModal('scan');
-        await processCamScan(currentCamScanId);
+        await processCamScan(currentCamScanId, { skipEmail: !sendEmail });
         return;
     }
     if (!currentScan) return;
@@ -1764,18 +1873,20 @@ async function submitScan() {
     render();
     closeModal('scan');
     toast('Shipment added!');
-    try {
-        var details = {
-            manufacturer: $('#f-mfr').value.trim(),
-            cartons: $('#f-cartons').value.trim(),
-            location: $('#f-location').value || '',
-            receivedDate: $('#f-date').value || '',
-            status: $('#f-status').value,
-            pdfUrl: (currentScan && currentScan.pdf_url) ? currentScan.pdf_url : ''
-        };
-        sendReceivingEmailMulti(cid, pmEmails, po, pid === '_unknown' ? null : +pid, details);
-    } catch(e) {}
-    switchTab('shipments', $$('.header-tab')[1]);
+    if (sendEmail) {
+        try {
+            var details = {
+                manufacturer: $('#f-mfr').value.trim(),
+                cartons: $('#f-cartons').value.trim(),
+                location: $('#f-location').value || '',
+                receivedDate: $('#f-date').value || '',
+                status: $('#f-status').value,
+                pdfUrl: (currentScan && currentScan.pdf_url) ? currentScan.pdf_url : ''
+            };
+            sendReceivingEmailMulti(cid, pmEmails, po, pid === '_unknown' ? null : +pid, details);
+        } catch(e) {}
+    }
+    switchTab('shipments');
 }
 
 function renderCalendar() {
@@ -3118,13 +3229,122 @@ async function closeScanAlert() {
     $('#scan-alert').classList.remove('show');
 }
 
-function showNav(v) { $$('.view').forEach(x => x.classList.remove('active')); $(`#view-${v}`).classList.add('active'); $$('.nav-item').forEach(n => n.classList.remove('active')); const navEl = $(`.nav-item[onclick="showNav('${v}')"]`) || $(`.nav-item[onclick*="showNav('${v}')"]`); if(navEl) navEl.classList.add('active'); closePanel(); }
+let _receivingTab = 'scans';
+let _dispatchTab = 'prepare';
+let _settingsTab = 'people';
+
+function isMobile() {
+  return window.matchMedia && window.matchMedia('(max-width: 900px)').matches;
+}
+
+function mobileTabForView(v) {
+  if (v === 'warehouse') return 'receiving';
+  if (v === 'people' || v === 'clients' || v === 'settings') return 'settings';
+  return v;
+}
+
+function updateMobileNav(active) {
+  document.querySelectorAll('.mobile-nav .mobile-tab').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.view === active);
+  });
+}
+
+function mobileNav(view) {
+  if (view === 'receiving') {
+    mobileReceivingTab(_receivingTab || 'scans');
+  } else if (view === 'dispatch') {
+    mobileDispatchTab(_dispatchTab || 'prepare');
+  } else if (view === 'projects') {
+    showNav('projects');
+  } else if (view === 'settings') {
+    mobileSettingsTab(_settingsTab || 'people');
+  }
+}
+
+function updateMobileReceivingTabs() {
+  document.querySelectorAll('.mobile-receiving-tabs .seg-btn').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.tab === _receivingTab);
+  });
+}
+
+function mobileReceivingTab(tab) {
+  _receivingTab = tab;
+  if (tab === 'warehouse') {
+    showNav('warehouse', 'receiving');
+    initWarehouse();
+  } else {
+    showNav('receiving', 'receiving');
+    switchTab(tab);
+  }
+  updateMobileReceivingTabs();
+}
+
+function updateMobileDispatchTabs() {
+  document.querySelectorAll('.mobile-dispatch-tabs .seg-btn').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.tab === _dispatchTab);
+  });
+  var prepare = document.getElementById('dispatch-prepare');
+  var history = document.getElementById('dispatch-history');
+  if (prepare && history) {
+    if (isMobile()) {
+      prepare.style.display = _dispatchTab === 'prepare' ? 'block' : 'none';
+      history.style.display = _dispatchTab === 'history' ? 'block' : 'none';
+    } else {
+      prepare.style.display = 'block';
+      history.style.display = 'block';
+    }
+  }
+}
+
+function mobileDispatchTab(tab) {
+  _dispatchTab = tab;
+  showNav('dispatch', 'dispatch');
+  updateMobileDispatchTabs();
+}
+
+function updateMobileSettingsTabs() {
+  document.querySelectorAll('.mobile-settings-tabs .seg-btn').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.tab === _settingsTab);
+  });
+}
+
+function mobileSettingsTab(tab) {
+  _settingsTab = tab;
+  if (tab === 'people') {
+    showNav('people', 'settings');
+  } else if (tab === 'clients') {
+    showNav('clients', 'settings');
+  } else {
+    showNav('settings', 'settings');
+    settingsTab('staff');
+  }
+  updateMobileSettingsTabs();
+}
+
+function showNav(v, mobileOverride) {
+  $$('.view').forEach(x => x.classList.remove('active'));
+  $(`#view-${v}`).classList.add('active');
+  $$('.nav-item').forEach(n => n.classList.remove('active'));
+  const navEl = $(`.nav-item[onclick="showNav('${v}')"]`) || $(`.nav-item[onclick*="showNav('${v}')"]`);
+  if (navEl) navEl.classList.add('active');
+  const mobileTab = mobileOverride || mobileTabForView(v);
+  updateMobileNav(mobileTab);
+  if (v === 'warehouse') _receivingTab = 'warehouse';
+  updateMobileReceivingTabs();
+  updateMobileDispatchTabs();
+  updateMobileSettingsTabs();
+  closePanel();
+}
+
 function switchTab(t, el) {
+  _receivingTab = t;
   document.querySelectorAll(".header-tab").forEach(function(x){ x.classList.remove("active"); });
-  el.classList.add("active");
+  if (!el) el = document.querySelector('.header-tab[data-tab="'+t+'"]');
+  if (el) el.classList.add("active");
   document.querySelectorAll(".tab-content").forEach(function(x){ x.classList.remove("active"); });
   var target = document.getElementById("tab-" + t);
   if (target) target.classList.add("active");
+  updateMobileReceivingTabs();
 }
 function openModal(t) {
       if (arguments[0] === 'project') loadPMDropdown(); document.getElementById('modal-'+t).classList.add('open'); if(t==='shipment-list'){ document.getElementById('sl-client').innerHTML='<option value="">Select...</option>'+clients.map(function(c){return '<option value="'+c.id+'">'+c.company+'</option>';}).join(''); document.getElementById('sl-project').innerHTML='<option value="">Select...</option>'+projects.map(function(p){return '<option value="'+p.id+'">'+p.name+'</option>';}).join(''); document.getElementById('sl-email').value='';document.getElementById('sl-po').value='';document.getElementById('sl-preview').style.display='none';document.getElementById('sl-submit-btn').disabled=true;document.getElementById('sl-submit-btn').textContent='Import Shipments';parsedShipmentOrders=[]; } }
