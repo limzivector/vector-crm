@@ -765,6 +765,11 @@ async function sbFetch(table, method = 'GET', query = '', data = null, headers =
     if (!_authAccessToken && getStoredAuth()) {
         await restoreSessionIfPossible();
     }
+    if (_authAccessToken && isTokenExpired(_authAccessToken)) {
+        console.warn('[AUTH] Access token expired in sbFetch — refreshing');
+        _authAccessToken = null;
+        await tryRefreshSession();
+    }
     const options = {
         method,
         headers: {
@@ -4212,9 +4217,12 @@ async function initAuth() {
             console.log('[AUTH] No session yet, but local auth exists — staying in app');
             hideLoginScreen();
             addSignOutButton();
-            if (!window._crmDataLoaded) {
-                window._crmDataLoaded = true;
-                try { await load(); render(); } catch(e) { console.error('[AUTH] load/render error:', e); }
+            // Attempt refresh before loading any data to avoid 401 spam
+            const refreshed = await tryRefreshSession();
+            if (refreshed) {
+                await handleAuthSession(refreshed);
+                _authInitRunning = false;
+                return;
             }
             setTimeout(initAuth, AUTH_RETRY_MS);
             _authInitRunning = false;
