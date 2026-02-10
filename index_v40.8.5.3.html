@@ -734,19 +734,13 @@ let _authAccessToken = null;
         var _parsed = JSON.parse(_storedSession);
         if (_parsed && _parsed.access_token) {
           // Avoid using an already-expired access token
-          try {
-            const parts = _parsed.access_token.split('.');
-            const payload = parts[1] ? JSON.parse(atob(parts[1])) : null;
-            const expMs = payload && payload.exp ? payload.exp * 1000 : 0;
-            if (expMs && (Date.now() < (expMs - 30000))) {
-              _authAccessToken = _parsed.access_token;
-              console.log('[AUTH] Token loaded from localStorage');
-            } else {
-              console.warn('[AUTH] Stored access token expired, will refresh');
-            }
-          } catch(e) {
+          const payload = decodeJwtPayload(_parsed.access_token);
+          const expMs = payload && payload.exp ? payload.exp * 1000 : 0;
+          if (expMs && (Date.now() < (expMs - 30000))) {
             _authAccessToken = _parsed.access_token;
-            console.log('[AUTH] Token loaded from localStorage (no exp check)');
+            console.log('[AUTH] Token loaded from localStorage');
+          } else {
+            console.warn('[AUTH] Stored access token expired, will refresh');
           }
         }
       }
@@ -3917,7 +3911,11 @@ const hasLocalAuth = () => !!_authAccessToken || !!getStoredAuth();
 const decodeJwtPayload = (token) => {
     try {
         const parts = token.split('.');
-        return parts[1] ? JSON.parse(atob(parts[1])) : null;
+        if (!parts[1]) return null;
+        let b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+        const pad = b64.length % 4;
+        if (pad) b64 += '='.repeat(4 - pad);
+        return JSON.parse(atob(b64));
     } catch(e) { return null; }
 };
 const isTokenExpired = (token, skewMs = 30000) => {
