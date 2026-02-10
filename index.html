@@ -696,7 +696,7 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
                 <div class="form-group" style="margin-top:16px"><label class="form-label">Purchase Order(PO) # <span class="req">*</span></label><input type="text" class="form-input" id="f-po"></div>
                 <div class="form-group"><label class="form-label">Is this a Return Product?</label><select class="form-select" id="f-return"><option value="no">No</option><option value="yes">Yes</option></select></div>
                 <div class="form-group"><label class="form-label">Client Name <span class="req">*</span></label><select class="form-select" id="f-client" onchange="onClientChange()"><option value="">Select...</option></select><div class="inline-add hidden" id="inline-client"><input type="text" class="form-input" id="il-client" placeholder="Company"><button class="btn btn-primary" onclick="addInlineClient()">Add</button></div><div class="form-hint"><a href="#" onclick="toggleInline('client');return false">+ Add new</a></div></div>
-                <div class="form-group"><label class="form-label">Project Name <span class="req">*</span></label><select class="form-select" id="f-project"><option value="">Select...</option><option value="_unknown">🚩 Unknown</option></select><div class="inline-add hidden" id="inline-project"><input type="text" class="form-input" id="il-project" placeholder="Project"><button class="btn btn-primary" onclick="addInlineProject()">Add</button></div><div class="form-hint"><a href="#" onclick="toggleInline('project');return false">+ Add new</a></div></div>
+                <div class="form-group"><label class="form-label">Project Name <span class="req">*</span></label><div style="position:relative"><input type="text" class="form-input" id="f-project-search" placeholder="Search project..." oninput="showProjectSuggestions(this,'f-project-sug')" onfocus="focusProjectInput(this,'f-project-sug')" onblur="blurProjectInput(this,'f-project-sug')" autocomplete="off"><div class="loc-suggestions" id="f-project-sug" style="display:none"></div></div><input type="hidden" id="f-project-id"><div class="inline-add hidden" id="inline-project"><input type="text" class="form-input" id="il-project" placeholder="Project"><button class="btn btn-primary" onclick="addInlineProject()">Add</button></div><div class="form-hint"><a href="#" onclick="toggleInline('project');return false">+ Add new</a></div></div>
                 <div class="form-group"><label class="form-label">Project Managers (CC)</label><div id="f-pm-list" class="pm-checklist"></div><div class="form-hint">Select one or more PMs to CC</div></div>
                 <div class="form-group"><label class="form-label">Manufacturer</label><input type="text" class="form-input" id="f-mfr"></div>
                 <div class="form-group"><label class="form-label">Cartons/Pallets</label><input type="text" class="form-input" id="f-cartons"></div>
@@ -721,6 +721,10 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
 <script>
 // Supabase Configuration
 const SUPABASE_URL = 'https://ilbrtyoeqrbkbbotoopu.supabase.co';
+// Clean OAuth hash if present to avoid auth/session glitches
+if (window.location.hash && window.location.hash.includes('access_token')) {
+    history.replaceState({}, '', window.location.pathname + window.location.search);
+}
 let camScans = [], camScansLoaded = false;
 let scanInbox = [];
     let camScanEdits = {}, camScanProcessed = {};
@@ -1598,7 +1602,20 @@ function openRawScanForm(id, source) {
     $('#f-po').value = edit.po || '';
     $('#f-client').value = edit.clientId || '';
     onClientChange();
-    $('#f-project').value = edit.projectId || '';
+    var projId = edit.projectId || '';
+    var projInput = $('#f-project-search');
+    var projHidden = $('#f-project-id');
+    if (projHidden) projHidden.value = projId || '';
+    if (projInput) {
+        if (projId === '_unknown') {
+            projInput.value = 'Unknown';
+        } else if (projId) {
+            var pObj = projects.find(function(p){ return p.id == projId; });
+            projInput.value = pObj ? pObj.name : '';
+        } else {
+            projInput.value = '';
+        }
+    }
     renderPMCheckboxes(edit.clientId ? parseInt(edit.clientId) : null, edit.pmEmails || []);
     $('#f-mfr').value = edit.manufacturer || '';
     $('#f-cartons').value = edit.cartons || '';
@@ -1641,12 +1658,15 @@ function renderPMCheckboxes(clientId, selectedEmails) {
 function onClientChange() {
     const c = +$('#f-client').value;
     const p = c ? projects.filter(x => x.clientId === c) : projects;
-    $('#f-project').innerHTML = '<option value="">Select...</option><option value="_unknown">🚩 Unknown</option>' + p.map(x => `<option value="${x.id}">${x.name}</option>`).join('');
+    var projInput = $('#f-project-search');
+    var projHidden = $('#f-project-id');
+    if (projInput) projInput.value = '';
+    if (projHidden) projHidden.value = '';
     renderPMCheckboxes(c || null, []);
 }
 
 async function submitScan() {
-    const po = $('#f-po').value.trim(), cid = +$('#f-client').value, pid = $('#f-project').value;
+    const po = $('#f-po').value.trim(), cid = +$('#f-client').value, pid = $('#f-project-id').value;
     const pmEmails = Array.from(document.querySelectorAll('#f-pm-list input[type=checkbox]:checked')).map(el => el.dataset.email).filter(Boolean);
     if (!po) return toast('Enter PO #');
     if (!cid) return toast('Select client');
@@ -2074,6 +2094,54 @@ function getKnownLocations() {
     var locs = new Set();
     shipments.forEach(function(s){ if(s.location && s.location.trim()) locs.add(s.location.trim()); });
     return Array.from(locs).sort();
+}
+
+function getProjectsForClient(clientId) {
+    const visibleProjects = getVisibleProjects();
+    if (!clientId) return visibleProjects;
+    return visibleProjects.filter(p => p.clientId == clientId);
+}
+
+function showProjectSuggestions(input, sugId) {
+    var term = (input.value || '').trim().toLowerCase();
+    var clientId = +$('#f-client').value || 0;
+    var list = getProjectsForClient(clientId);
+    var filtered = term ? list.filter(function(p){ return (p.name || '').toLowerCase().includes(term); }) : list;
+    var sugEl = document.getElementById(sugId);
+    if (!sugEl) return;
+    var rows = [];
+    rows.push('<div class="loc-sug-item" onmousedown="selectProjectSuggestion(\'_unknown\',\'Unknown\',\'' + input.id + '\',\'' + sugId + '\')"><strong>Unknown</strong></div>');
+    filtered.slice(0, 20).forEach(function(p) {
+        rows.push('<div class="loc-sug-item" onmousedown="selectProjectSuggestion(\'' + p.id + '\',\'' + escapeHtml(p.name) + '\',\'' + input.id + '\',\'' + sugId + '\')"><strong>' + escapeHtml(p.name) + '</strong></div>');
+    });
+    sugEl.innerHTML = rows.join('');
+    sugEl.style.display = 'block';
+}
+
+function selectProjectSuggestion(id, name, inputId, sugId) {
+    var input = document.getElementById(inputId);
+    var hidden = document.getElementById('f-project-id');
+    if (input) input.value = name;
+    if (hidden) hidden.value = id;
+    var sugEl = document.getElementById(sugId);
+    if (sugEl) sugEl.style.display = 'none';
+}
+
+function focusProjectInput(input, sugId) { showProjectSuggestions(input, sugId); }
+function blurProjectInput(input, sugId) {
+    setTimeout(()=>{ const sugEl=document.getElementById(sugId); if(sugEl) sugEl.style.display='none'; },200);
+    var term = (input.value || '').trim().toLowerCase();
+    if (!term) { $('#f-project-id').value = ''; return; }
+    var clientId = +$('#f-client').value || 0;
+    var list = getProjectsForClient(clientId);
+    var exact = list.find(function(p){ return (p.name || '').toLowerCase() === term; });
+    if (exact) {
+        $('#f-project-id').value = exact.id;
+    } else if (term === 'unknown') {
+        $('#f-project-id').value = '_unknown';
+    } else {
+        $('#f-project-id').value = '';
+    }
 }
 
 function buildLocationOptions(selected) {
@@ -2960,7 +3028,8 @@ async function addInlineProject() {
     }
     saveLocal();
     onClientChange();
-    $('#f-project').value = newId;
+    $('#f-project-id').value = newId;
+    $('#f-project-search').value = n;
     $('#il-project').value = '';
     $('#inline-project').classList.add('hidden');
 }
@@ -3850,6 +3919,10 @@ async function handleAuthSession(session) {
     try {
         console.log('[AUTH] handleAuthSession for:', session.user.email);
         _authAccessToken = session.access_token;
+        // Clean auth hash from URL to avoid session glitches
+        if (window.location.hash && window.location.hash.includes('access_token')) {
+            history.replaceState({}, '', window.location.pathname + window.location.search);
+        }
         
         // Check if user exists in DB
         var { data: userData, error: userError } = await _supabaseAuth
@@ -3965,6 +4038,14 @@ async function initAuth() {
             if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
                 await handleAuthSession(session);
             } else if (event === 'SIGNED_OUT') {
+                // Guard against false sign-outs by rechecking session
+                try {
+                    var { data: { session: s2 } } = await _supabaseAuth.auth.getSession();
+                    if (s2) {
+                        await handleAuthSession(s2);
+                        return;
+                    }
+                } catch(e) {}
                 showLoginScreen();
             }
         });
