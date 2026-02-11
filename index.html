@@ -1,4 +1,3 @@
-
             
             </div>
             <!DOCTYPE html>
@@ -360,7 +359,7 @@
         /* Client Portal Styles */
         .portal-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:#292f4c; z-index:9999; display:none; flex-direction:column; }
         .portal-overlay.active { display:flex; }
-        .portal-login { max-width:400px; margin:auto; padding:40px; background:var(--card); border-radius:12px; box-shadow:0 20px 60px rgba(0,0,0,0.3); }
+        .portal-login { max-width:400px; margin:auto; padding:40px; background:var(-card); border-radius:12px; box-shadow:0 20px 60px rgba(0,0,0,0.3); }
         .portal-login h1 { font-size:24px; font-weight:700; margin-bottom:8px; text-align:center; }
         .portal-login p { color:var(--text2); font-size:14px; text-align:center; margin-bottom:24px; }
         .portal-login .form-group { margin-bottom:16px; }
@@ -988,6 +987,11 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
                     <textarea class="form-input" id="auto-ai-prompt" rows="3" placeholder="Prompt template for Gemini..."></textarea>
                 </div>
             </div>
+            <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:16px;">
+                <h3 style="margin:0 0 12px;font-size:15px;font-weight:600;">Workflow Steps</h3>
+                <div id="steps-list"><div style="color:var(--muted);padding:8px 0;font-size:13px;">No steps defined. Click + Add Step to build the workflow.</div></div>
+                <button type="button" class="btn btn-outline" style="margin-top:8px;" onclick="addWorkflowStep()">+ Add Step</button>
+            </div>
         </div>
         <div class="modal-footer">
             <button class="btn btn-outline" onclick="closeAutomationModal()">Cancel</button>
@@ -1359,7 +1363,8 @@ const BMG_MILESTONE_STAGES = [
 
 const SAMPLE_ORGS = [
     { name: 'Vector Installation Services', slug: 'vector', default_project_type: 'install' },
-    { name: 'Business Moving Group', slug: 'bmg', default_project_type: 'move' }
+    { name: 'Business Moving Group', slug: 'bmg', default_project_type: 'move' },
+    { name: 'Stucco Champions', slug: 'stucco', default_project_type: 'stucco' }
 ];
 const ORG_SCOPED_TABLES = new Set([
     'clients','people','projects','scans','scan_inbox','shipments','punchlist','dispatches','loading_sheets','project_completions',
@@ -1367,7 +1372,7 @@ const ORG_SCOPED_TABLES = new Set([
     'surveys','survey_rooms','survey_items','quotes','quote_items','move_milestones','move_access','move_labels','move_materials',
     'staff_roles','staff_permissions','users','integrations',
     'warehouse_rows','warehouse_bays','warehouse_bins','inventory_items'
-, 'automations', 'automation_folders']);
+, 'automations', 'automation_folders', 'workflow_steps']);
 
 function ensureFallbackOrgs() {
     if (orgs && orgs.length) return;
@@ -3799,6 +3804,11 @@ function isBmgWorkspace() {
     const slug = (org && org.slug ? String(org.slug).toLowerCase() : '');
     return slug === 'bmg';
 }
+function isStuccoWorkspace() {
+    const org = getActiveOrg();
+    const slug = (org && org.slug ? String(org.slug).toLowerCase() : '');
+    return slug === 'stucco';
+}
 function isBmgContext(project) {
     if (!project) return false;
     return isBmgWorkspace() || getProjectType(project) === 'move';
@@ -5671,6 +5681,7 @@ function openAutomationModal(id) {
     document.getElementById('auto-ai-section').style.display = data.aiEnabled ? 'block' : 'none';
     document.getElementById('automation-modal-title').textContent = editingAutomationId ? 'Edit Workflow' : 'Create Workflow';
     modal.classList.add('open');
+    loadWorkflowSteps(id);
 }
 
 function closeAutomationModal() {
@@ -5712,6 +5723,8 @@ function saveAutomation() {
     
       // Upsert to Supabase
       sbFetch('automations', 'POST', '', payload, {'Prefer': 'resolution=merge-duplicates'}).catch(e => console.warn('Supabase save failed', e));
+      // Save workflow steps to Supabase
+      saveWorkflowSteps(payload.id);
       closeAutomationModal();
     renderAutomations();
 }
@@ -5785,6 +5798,121 @@ function renderAutomations() {
             </tbody>
         </table>
     `;
+}
+
+// ── Workflow Steps (CRUD) ──────────────────────────
+function loadWorkflowSteps(automationId) {
+    if (!automationId) {
+        window._currentWorkflowSteps = [];
+        renderWorkflowSteps();
+        return;
+    }
+    sbFetch('workflow_steps', 'GET', '?automation_id=eq.' + automationId + '&order=stepOrder.asc')
+        .then(function(data) {
+            window._currentWorkflowSteps = (data && data.length) ? data : [];
+            renderWorkflowSteps();
+        })
+        .catch(function(e) {
+            console.warn('Failed to load workflow steps', e);
+            window._currentWorkflowSteps = [];
+            renderWorkflowSteps();
+        });
+}
+
+function renderWorkflowSteps() {
+    var list = document.getElementById("steps-list");
+    if (!list) return;
+    var steps = window._currentWorkflowSteps || [];
+    if (!steps.length) {
+        list.innerHTML = '<div style="color:var(--muted);padding:8px 0;font-size:13px;">No steps defined. Click + Add Step to build the workflow.</div>';
+        return;
+    }
+    list.innerHTML = steps.map(function(s, i) {
+        var typeColors = {trigger: "#3b82f6", action: "#10b981", wait: "#f59e0b"};
+        var color = typeColors[s.stepType] || "#64748b";
+        var configStr = typeof s.config === "object" ? JSON.stringify(s.config, null, 2) : (s.config || "{}");
+        return '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px;background:var(--card-bg);">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+                '<div style="display:flex;gap:8px;align-items:center;">' +
+                    '<span style="background:' + color + ';color:white;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;text-transform:uppercase;">' + escapeHtml(s.stepType || "action") + '</span>' +
+                    '<strong>' + escapeHtml(s.actionName || s.actionType || "Untitled") + '</strong>' +
+                '</div>' +
+                '<button type="button" onclick="removeWorkflowStep(' + i + ')" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px;">&times;</button>' +
+            '</div>' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+                '<div><label class="form-label" style="font-size:11px;">Step Type</label>' +
+                    '<select class="form-select" onchange="updateStepField(' + i + ',\'stepType\',this.value)">' +
+                        '<option value="trigger"' + (s.stepType==="trigger"?" selected":"") + '>Trigger</option>' +
+                        '<option value="action"' + (s.stepType==="action"?" selected":"") + '>Action</option>' +
+                        '<option value="wait"' + (s.stepType==="wait"?" selected":"") + '>Wait</option>' +
+                    '</select></div>' +
+                '<div><label class="form-label" style="font-size:11px;">Action Type</label>' +
+                    '<select class="form-select" onchange="updateStepField(' + i + ',\'actionType\',this.value)">' +
+                        '<option value="form_submitted"' + (s.actionType==="form_submitted"?" selected":"") + '>Form Submitted</option>' +
+                        '<option value="contact_created"' + (s.actionType==="contact_created"?" selected":"") + '>Contact Created</option>' +
+                        '<option value="status_changed"' + (s.actionType==="status_changed"?" selected":"") + '>Status Changed</option>' +
+                        '<option value="call_received"' + (s.actionType==="call_received"?" selected":"") + '>Call Received</option>' +
+                        '<option value="invoice_sent"' + (s.actionType==="invoice_sent"?" selected":"") + '>Invoice Sent</option>' +
+                        '<option value="send_sms"' + (s.actionType==="send_sms"?" selected":"") + '>Send SMS</option>' +
+                        '<option value="send_email"' + (s.actionType==="send_email"?" selected":"") + '>Send Email</option>' +
+                        '<option value="internal_notification"' + (s.actionType==="internal_notification"?" selected":"") + '>Internal Notification</option>' +
+                        '<option value="wait"' + (s.actionType==="wait"?" selected":"") + '>Wait/Delay</option>' +
+                    '</select></div>' +
+            '</div>' +
+            '<div style="margin-top:8px;"><label class="form-label" style="font-size:11px;">Action Name</label>' +
+                '<input type="text" class="form-input" value="' + escapeHtml(s.actionName || "") + '" onchange="updateStepField(' + i + ',\'actionName\',this.value)" /></div>' +
+            '<div style="margin-top:8px;"><label class="form-label" style="font-size:11px;">Config (JSON)</label>' +
+                '<textarea class="form-input" onchange="updateStepField(' + i + ',\'config\',this.value)" style="font-family:monospace;font-size:12px;min-height:60px;resize:vertical;">' + escapeHtml(configStr) + '</textarea></div>' +
+        '</div>';
+    }).join("");
+}
+
+function addWorkflowStep() {
+    var steps = window._currentWorkflowSteps || [];
+    steps.push({stepOrder: steps.length, stepType: "action", actionType: "send_sms", actionName: "New Step", config: {}});
+    window._currentWorkflowSteps = steps;
+    renderWorkflowSteps();
+}
+
+function removeWorkflowStep(i) {
+    var steps = window._currentWorkflowSteps || [];
+    steps.splice(i, 1);
+    steps.forEach(function(s, idx) { s.stepOrder = idx; });
+    window._currentWorkflowSteps = steps;
+    renderWorkflowSteps();
+}
+
+function updateStepField(i, field, value) {
+    var steps = window._currentWorkflowSteps || [];
+    if (steps[i]) {
+        if (field === "config") {
+            try { steps[i].config = JSON.parse(value); } catch(e) { steps[i].config = value; }
+        } else {
+            steps[i][field] = value;
+        }
+    }
+}
+
+function saveWorkflowSteps(automationId) {
+    var steps = window._currentWorkflowSteps || [];
+    var orgId = getActiveOrgId();
+    sbFetch("workflow_steps", "DELETE", "?automation_id=eq." + automationId)
+        .then(function() {
+            steps.forEach(function(s, i) {
+                var row = {
+                    automation_id: automationId,
+                    org_id: orgId,
+                    stepOrder: i,
+                    stepType: s.stepType || "action",
+                    actionType: s.actionType || "",
+                    actionName: s.actionName || "",
+                    config: typeof s.config === "string" ? JSON.parse(s.config || "{}") : (s.config || {})
+                };
+                sbFetch("workflow_steps", "POST", "", row, {"Prefer": "resolution=merge-duplicates"})
+                    .catch(function(e) { console.warn("Step save failed", e); });
+            });
+        })
+        .catch(function(e) { console.warn("Step delete failed", e); });
 }
 
 function setProjectSearch(val) {
