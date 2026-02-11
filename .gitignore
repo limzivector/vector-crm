@@ -1,5 +1,6 @@
 vercel-deploy/
 vector-crm-v40.6-source/
+backups/
 *.zip
 .DS_Store
 .vercel

@@ -391,6 +391,30 @@
         .portal-stat .num { font-size:28px; font-weight:700; color:var(--blue); }
         .portal-stat .label { font-size:12px; color:var(--text2); margin-top:4px; }
 
+        /* Quote Share (public link-only quote view) */
+        .quote-share-overlay { position:fixed; inset:0; background:#f4f6fa; z-index:10001; display:none; overflow:auto; }
+        .quote-share-overlay.active { display:block; }
+        .quote-share-topbar { position:sticky; top:0; background:#292f4c; color:#fff; padding:14px 18px; border-bottom:1px solid rgba(255,255,255,0.12); z-index:1; }
+        .quote-share-brand { display:flex; align-items:center; gap:10px; font-weight:700; }
+        .quote-share-brand span { width:32px; height:32px; background:var(--blue); border-radius:8px; display:flex; align-items:center; justify-content:center; }
+        .quote-share-wrap { max-width:860px; margin:24px auto; padding:0 16px 48px; }
+        .quote-share-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:20px; box-shadow:0 12px 30px rgba(0,0,0,0.08); }
+        .quote-share-loading { font-size:14px; color:var(--text2); }
+        .quote-share-error { color:var(--red); font-size:14px; }
+        .quote-share-kv { display:flex; gap:16px; flex-wrap:wrap; margin-top:12px; font-size:12px; color:var(--text2); }
+        .quote-share-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:16px; flex-wrap:wrap; }
+        .quote-share-table { width:100%; border-collapse:collapse; margin-top:16px; }
+        .quote-share-table th { text-align:left; font-size:11px; text-transform:uppercase; color:var(--muted); padding:10px 8px; border-bottom:1px solid var(--border); background:var(--gray-lt); }
+        .quote-share-table td { padding:10px 8px; border-bottom:1px solid var(--border); font-size:13px; }
+        .quote-share-total { text-align:right; margin-top:12px; }
+        .quote-share-total div { font-size:13px; color:var(--text2); }
+        .quote-share-total strong { font-size:16px; color:var(--text); }
+        @media (max-width: 600px) {
+          .quote-share-card { padding:14px; }
+          .quote-share-actions { justify-content:stretch; }
+          .quote-share-actions .btn { width:100%; justify-content:center; }
+        }
+
         /* Settings & Staff Management */
         .settings-tabs { display:flex; gap:4px; margin-bottom:24px; background:var(--gray-lt); border-radius:8px; padding:4px; }
         .settings-tab { padding:10px 20px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; color:var(--text2); border:none; background:none; font-family:inherit; }
@@ -523,6 +547,7 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 </head>
 <body>
     <div id="auth-overlay">
@@ -565,6 +590,20 @@ main.main { position: fixed !important; top: 0; left: 240px; right: 0; bottom: 0
             <button class="btn btn-outline" onclick="portalLogout()">Sign Out</button>
         </div>
         <div class="portal-body" id="portal-body"></div>
+    </div>
+
+    <!-- Quote Share (link-only) -->
+    <div class="quote-share-overlay" id="quote-share-overlay">
+        <div class="quote-share-topbar">
+            <div class="quote-share-brand" id="quote-share-brand"><span>V</span> Quote</div>
+        </div>
+        <div class="quote-share-wrap">
+            <div class="quote-share-card">
+                <div id="quote-share-loading" class="quote-share-loading">Loading quote...</div>
+                <div id="quote-share-error" class="quote-share-error" style="display:none"></div>
+                <div id="quote-share-content" style="display:none"></div>
+            </div>
+        </div>
     </div>
 
     <div class="app">
@@ -1369,7 +1408,7 @@ const SAMPLE_ORGS = [
 const ORG_SCOPED_TABLES = new Set([
     'clients','people','projects','scans','scan_inbox','shipments','punchlist','dispatches','loading_sheets','project_completions',
     'move_checklists','move_items','jobsite_readiness','time_entries','project_updates','change_orders',
-    'surveys','survey_rooms','survey_items','quotes','quote_items','move_milestones','move_access','move_labels','move_materials',
+    'surveys','survey_rooms','survey_items','quotes','quote_items','quote_share_links','move_milestones','move_access','move_labels','move_materials',
     'staff_roles','staff_permissions','users','integrations',
     'warehouse_rows','warehouse_bays','warehouse_bins','inventory_items'
 , 'automations', 'automation_folders', 'workflow_steps']);
@@ -4010,30 +4049,63 @@ async function addQuoteItem(){
     await saveQuoteTotals(quote);
     renderProjectPanelExtras(currentProject);
 }
-async function updateQuoteTax(val){
+ async function updateQuoteTax(val){
+     if (!currentProject) return;
+     const quote = getActiveQuote(currentProject.id);
+     if (!quote) return;
+     quote.tax = parseFloat(val || '0') || 0;
+     await saveQuoteTotals(quote);
+     renderProjectPanelExtras(currentProject);
+ }
+
+function getTodayIsoDate() {
+    return new Date().toISOString().slice(0, 10);
+}
+
+function getDefaultQuoteExpiresAt() {
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    return d.toISOString().slice(0, 10);
+}
+
+function isQuoteExpired(quote) {
+    if (!quote) return false;
+    if ((quote.status || '').toLowerCase() === 'signed') return false;
+    if (!quote.expiresAt) return false;
+    return String(quote.expiresAt) < getTodayIsoDate();
+}
+
+async function updateQuoteExpiresAt(val) {
     if (!currentProject) return;
     const quote = getActiveQuote(currentProject.id);
     if (!quote) return;
-    quote.tax = parseFloat(val || '0') || 0;
-    await saveQuoteTotals(quote);
+    const next = (val || '').trim();
+    quote.expiresAt = next || null;
+    await sbUpdate('quotes', quote.id, { expires_at: quote.expiresAt });
     renderProjectPanelExtras(currentProject);
 }
-async function setQuoteStatus(status){
-    if (!currentProject) return;
-    const quote = getActiveQuote(currentProject.id);
-    if (!quote) return;
-    quote.status = status;
-    await sbUpdate('quotes', quote.id, { status });
-    renderProjectPanelExtras(currentProject);
-}
-async function signQuote(){
-    if (!currentProject) return;
-    const quote = getActiveQuote(currentProject.id);
-    if (!quote) return;
-    const name = ($('#qi-sign-name').value || '').trim();
-    const email = ($('#qi-sign-email').value || '').trim();
-    if (!name) return toast('Enter signer name');
-    quote.signedName = name;
+ async function setQuoteStatus(status){
+     if (!currentProject) return;
+     const quote = getActiveQuote(currentProject.id);
+     if (!quote) return;
+     quote.status = status;
+     const payload = { status };
+     if (status === 'sent' && !quote.expiresAt) {
+         quote.expiresAt = getDefaultQuoteExpiresAt();
+         payload.expires_at = quote.expiresAt;
+     }
+     await sbUpdate('quotes', quote.id, payload);
+     renderProjectPanelExtras(currentProject);
+ }
+ async function signQuote(){
+     if (!currentProject) return;
+     const quote = getActiveQuote(currentProject.id);
+     if (!quote) return;
+     if (isQuoteExpired(quote)) return toast('Quote expired');
+     const name = ($('#qi-sign-name').value || '').trim();
+     const email = ($('#qi-sign-email').value || '').trim();
+     if (!name) return toast('Enter signer name');
+     quote.signedName = name;
     quote.signedEmail = email;
     quote.signedAt = new Date().toISOString();
     quote.status = 'signed';
@@ -4041,12 +4113,122 @@ async function signQuote(){
     renderProjectPanelExtras(currentProject);
     toast('Quote signed');
 }
+function downloadQuotePdfFromData(data) {
+    try {
+        const jsPDF = (window.jspdf && window.jspdf.jsPDF) ? window.jspdf.jsPDF : null;
+        if (!jsPDF) return false;
+
+        const orgName = data.orgName || 'Quote';
+        const projectName = data.projectName || '';
+        const version = data.version || 1;
+        const items = Array.isArray(data.items) ? data.items : [];
+        const subtotal = Number(data.subtotal || 0) || 0;
+        const tax = Number(data.tax || 0) || 0;
+        const total = Number(data.total || 0) || 0;
+        const filename = data.filename || 'quote.pdf';
+
+        const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+        const pageW = doc.internal.pageSize.getWidth();
+        const pageH = doc.internal.pageSize.getHeight();
+        const margin = 40;
+        let y = 54;
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(18);
+        doc.text(orgName, margin, y);
+        y += 18;
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(11);
+        doc.text(`Project: ${projectName}`, margin, y);
+        y += 14;
+        doc.text(`Quote Version: v${version}`, margin, y);
+        y += 18;
+
+        const colItem = margin;
+        const colQty = pageW - margin - 200;
+        const colUnit = pageW - margin - 120;
+        const colTot = pageW - margin;
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(10);
+        doc.text('Item', colItem, y);
+        doc.text('Qty', colQty, y, { align: 'right' });
+        doc.text('Unit', colUnit, y, { align: 'right' });
+        doc.text('Total', colTot, y, { align: 'right' });
+        y += 10;
+        doc.setDrawColor(200);
+        doc.line(margin, y, pageW - margin, y);
+        y += 14;
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10);
+        const maxItemWidth = (colQty - 12) - colItem;
+
+        for (const it of items) {
+            const name = String(it.name || '');
+            const qty = (Number(it.qty || it.quantity || 0) || 0);
+            const unit = Number(it.unitPrice || it.unit_price || 0) || 0;
+            const lineTotal = Number(it.lineTotal || it.line_total || 0) || 0;
+
+            const lines = doc.splitTextToSize(name || '-', maxItemWidth);
+            const rowHeight = Math.max(14, lines.length * 12);
+
+            if (y + rowHeight + 120 > pageH) {
+                doc.addPage();
+                y = 54;
+            }
+
+            doc.text(lines, colItem, y);
+            doc.text(String(qty || 1), colQty, y, { align: 'right' });
+            doc.text(`$${unit.toFixed(2)}`, colUnit, y, { align: 'right' });
+            doc.text(`$${lineTotal.toFixed(2)}`, colTot, y, { align: 'right' });
+            y += rowHeight;
+        }
+
+        y += 10;
+        doc.setDrawColor(220);
+        doc.line(margin, y, pageW - margin, y);
+        y += 16;
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(11);
+        doc.text(`Subtotal: $${subtotal.toFixed(2)}`, colTot, y, { align: 'right' });
+        y += 14;
+        doc.text(`Tax: $${tax.toFixed(2)}`, colTot, y, { align: 'right' });
+        y += 16;
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(12);
+        doc.text(`Total: $${total.toFixed(2)}`, colTot, y, { align: 'right' });
+
+        doc.save(filename);
+        return true;
+    } catch (e) {
+        console.warn('PDF generation failed:', e);
+        return false;
+    }
+}
+
 function downloadQuotePdf(){
     if (!currentProject) return;
     const quote = getActiveQuote(currentProject.id);
     if (!quote) return;
     const items = getQuoteItems(quote.id);
     const org = getActiveOrg();
+
+    const ok = downloadQuotePdfFromData({
+        orgName: org ? getOrgDisplayName(org) : 'Quote',
+        projectName: currentProject.name || '',
+        version: quote.version || 1,
+        items: items.map(i => ({ name: i.name, qty: i.qty, unitPrice: i.unitPrice, lineTotal: i.lineTotal })),
+        subtotal: quote.subtotal || 0,
+        tax: quote.tax || 0,
+        total: quote.total || 0,
+        filename: sanitizeFilename(`Quote_${(currentProject.name || 'Project')}_v${quote.version || 1}.pdf`)
+    });
+
+    // Fallback: open printable HTML if jsPDF is blocked/unavailable
+    if (ok) return;
     const html = `
         <html><head><title>Quote v${quote.version || 1}</title></head>
         <body style="font-family:Arial,sans-serif;padding:24px">
@@ -4065,6 +4247,209 @@ function downloadQuotePdf(){
     if (w) { w.document.write(html); w.document.close(); w.focus(); }
 }
 
+async function createQuoteShareLink(){
+    if (!currentProject) return;
+    const quote = getActiveQuote(currentProject.id);
+    if (!quote) return toast('Create a quote first');
+    if (isQuoteExpired(quote)) return toast('Quote is expired');
+
+    const exp = quote.expiresAt || getDefaultQuoteExpiresAt();
+    if (!quote.expiresAt) {
+        quote.expiresAt = exp;
+        try { await sbUpdate('quotes', quote.id, { expires_at: exp }); } catch(e) {}
+    }
+
+    const headers = { 'Content-Type': 'application/json' };
+    const token = (typeof _authAccessToken === 'string' && _authAccessToken) ? _authAccessToken : '';
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+
+    const resp = await fetch('/api/quote-share', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ quoteId: quote.id, orgId: getActiveOrgId(), expiresAt: exp })
+    });
+    const data = await resp.json().catch(()=> ({}));
+    if (!resp.ok || !data.shareUrl) return toast(data.error || 'Failed to create share link');
+    openQuoteShareLinkModal(data.shareUrl, data.expiresAt || exp);
+}
+
+function openQuoteShareLinkModal(url, expiresAt){
+    const bg = document.createElement('div');
+    bg.className = 'modal-bg open';
+    bg.id = 'modal-quote-share';
+    bg.innerHTML = `
+      <div class="modal" style="max-width:640px">
+        <div class="modal-header">
+          <h2 class="modal-title">Quote Share Link</h2>
+          <button class="modal-close" onclick="document.getElementById('modal-quote-share')?.remove()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div style="font-size:13px;color:var(--text2);margin-bottom:10px">Anyone with this link can view and download the quote until <strong>${escapeHtml(expiresAt || '')}</strong>.</div>
+          <div class="form-group">
+            <label class="form-label">Share URL</label>
+            <input type="text" class="form-input" id="quote-share-url" value="${escapeHtml(url)}" readonly onclick="this.select()">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="document.getElementById('modal-quote-share')?.remove()">Close</button>
+          <button class="btn btn-primary" onclick="copyQuoteShareUrl()">Copy Link</button>
+        </div>
+      </div>`;
+    document.body.appendChild(bg);
+}
+
+async function copyQuoteShareUrl(){
+    const el = document.getElementById('quote-share-url');
+    const url = el ? el.value : '';
+    if (!url) return;
+    try { await navigator.clipboard.writeText(url); toast('Link copied'); }
+    catch(e) { el.select(); document.execCommand('copy'); toast('Link copied'); }
+}
+
+/* ====================== QUOTE SHARE (PUBLIC LINK) ====================== */
+let _quoteSharePayload = null;
+
+function initQuoteShare() {
+    try {
+        const params = new URLSearchParams(window.location.search || '');
+        const token = params.get('quote');
+        if (!token) return false;
+
+        const overlay = document.getElementById('quote-share-overlay');
+        if (overlay) overlay.classList.add('active');
+
+        const appEl = document.querySelector('.app');
+        if (appEl) appEl.style.display = 'none';
+
+        const auth = document.getElementById('auth-overlay');
+        if (auth) auth.style.display = 'none';
+
+        // Hide portal UI if present
+        const portalOverlay = document.getElementById('portal-overlay');
+        if (portalOverlay) portalOverlay.classList.remove('active');
+        const portalDash = document.getElementById('portal-dash');
+        if (portalDash) portalDash.classList.remove('active');
+
+        loadQuoteSharePublic(token);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+async function loadQuoteSharePublic(token) {
+    const loading = document.getElementById('quote-share-loading');
+    const error = document.getElementById('quote-share-error');
+    const content = document.getElementById('quote-share-content');
+
+    if (loading) loading.style.display = '';
+    if (error) { error.style.display = 'none'; error.textContent = ''; }
+    if (content) { content.style.display = 'none'; content.innerHTML = ''; }
+
+    try {
+        const resp = await fetch('/api/quote-share?token=' + encodeURIComponent(token));
+        const data = await resp.json().catch(()=> ({}));
+        if (!resp.ok || !data || !data.ok) {
+            const msg = (data && data.error) ? data.error : 'Unable to load quote';
+            if (error) { error.textContent = msg; error.style.display = 'block'; }
+            return;
+        }
+        _quoteSharePayload = data;
+        renderQuoteSharePublic(data);
+    } catch (e) {
+        if (error) { error.textContent = 'Network error loading quote'; error.style.display = 'block'; }
+    } finally {
+        if (loading) loading.style.display = 'none';
+    }
+}
+
+function renderQuoteSharePublic(data) {
+    const brand = document.getElementById('quote-share-brand');
+    const content = document.getElementById('quote-share-content');
+    if (!content) return;
+
+    const orgName = (data.org && data.org.name) ? data.org.name : 'Quote';
+    if (brand) brand.innerHTML = `<span>V</span> ${escapeHtml(orgName)} Quote`;
+
+    const projectName = (data.project && data.project.name) ? data.project.name : '';
+    const quote = data.quote || {};
+    const items = Array.isArray(data.items) ? data.items : [];
+    const version = quote.version || 1;
+    const expires = quote.expires_at || (data.share ? data.share.expires_at : '') || '';
+    const subtotal = Number(quote.subtotal || 0) || 0;
+    const tax = Number(quote.tax || 0) || 0;
+    const total = Number(quote.total || 0) || 0;
+
+    const rows = items.length ? items.map(it => {
+        const name = escapeHtml(it.name || '');
+        const qty = (it.qty != null ? it.qty : it.quantity);
+        const unit = (it.unit_price != null ? it.unit_price : it.unitPrice);
+        const line = (it.line_total != null ? it.line_total : it.lineTotal);
+        return `<tr>
+          <td>${name}</td>
+          <td style="text-align:right">${qty != null ? qty : ''}</td>
+          <td style="text-align:right">${unit != null ? '$' + (Number(unit)||0).toFixed(2) : ''}</td>
+          <td style="text-align:right">${line != null ? '$' + (Number(line)||0).toFixed(2) : ''}</td>
+        </tr>`;
+    }).join('') : '<tr><td colspan="4" style="color:var(--muted);padding:14px 8px">No line items.</td></tr>';
+
+    content.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
+        <div>
+          <h2 style="font-size:20px;font-weight:800;margin-bottom:4px">${escapeHtml(projectName || 'Project')}</h2>
+          <div style="color:var(--text2);font-size:13px">Quote v${version}${expires ? ' • Expires ' + escapeHtml(expires) : ''}</div>
+        </div>
+        <div class="quote-share-actions">
+          <button class="btn btn-outline" onclick="downloadSharedQuotePdf()">Download PDF</button>
+        </div>
+      </div>
+
+      <table class="quote-share-table">
+        <thead>
+          <tr><th>Item</th><th style="text-align:right">Qty</th><th style="text-align:right">Unit</th><th style="text-align:right">Total</th></tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+
+      <div class="quote-share-total">
+        <div>Subtotal: $${subtotal.toFixed(2)}</div>
+        <div>Tax: $${tax.toFixed(2)}</div>
+        <div><strong>Total: $${total.toFixed(2)}</strong></div>
+      </div>
+
+      <div style="margin-top:16px;font-size:12px;color:var(--muted)">
+        This link is private. Please do not forward unless intended.
+      </div>
+    `;
+
+    content.style.display = '';
+}
+
+function downloadSharedQuotePdf() {
+    if (!_quoteSharePayload || !_quoteSharePayload.quote) return;
+    const data = _quoteSharePayload;
+    const orgName = (data.org && data.org.name) ? data.org.name : 'Quote';
+    const projectName = (data.project && data.project.name) ? data.project.name : '';
+    const quote = data.quote || {};
+    const version = quote.version || 1;
+    const items = Array.isArray(data.items) ? data.items : [];
+    const filename = sanitizeFilename(`Quote_${(projectName || 'Project')}_v${version}.pdf`);
+
+    const ok = downloadQuotePdfFromData({
+        orgName,
+        projectName,
+        version,
+        items,
+        subtotal: quote.subtotal || 0,
+        tax: quote.tax || 0,
+        total: quote.total || 0,
+        filename
+    });
+    if (!ok) alert('PDF download unavailable on this browser.');
+}
+
 function renderBmgQuote(project){
     if (!isBmgContext(project)) return '<div style="color:var(--muted);font-size:12px">Quotes are used for moving projects.</div>';
     const list = getQuotesForProject(project.id);
@@ -4078,12 +4463,16 @@ function renderBmgQuote(project){
     if (!active) return h;
     const items = getQuoteItems(active.id);
     recalcQuoteTotals(active);
+    const expired = isQuoteExpired(active);
     h += '<div class="mini-card" style="background:#fff;border:1px solid var(--border)">';
     h += '<div class="form-row"><div class="form-group"><label class="form-label">Status</label><select class="form-select" onchange="setQuoteStatus(this.value)">' +
         ['draft','sent','approved','signed','expired'].map(s => `<option value="${s}" ${active.status===s?'selected':''}>${s}</option>`).join('') + '</select></div>' +
-        '<div class="form-group"><label class="form-label">Tax</label><input type="number" class="form-input" value="'+(active.tax||0)+'" onblur="updateQuoteTax(this.value)"></div></div>';
+        '<div class="form-group"><label class="form-label">Expires</label><input type="date" class="form-input" value="'+escapeHtml(active.expiresAt||'')+'" onblur="updateQuoteExpiresAt(this.value)"></div></div>';
+    h += '<div class="form-row"><div class="form-group"><label class="form-label">Tax</label><input type="number" class="form-input" value="'+(active.tax||0)+'" onblur="updateQuoteTax(this.value)"></div>' +
+        '<div class="form-group"><label class="form-label">Share Link</label><button class="btn btn-outline" style="width:100%" onclick="createQuoteShareLink()">Generate Link</button></div></div>';
     h += items.length ? items.map(i => `<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span>${escapeHtml(i.name||'')}</span><span>$${(i.lineTotal||0).toFixed(2)}</span></div>`).join('') : '<div style="font-size:12px;color:var(--muted)">No line items yet.</div>';
     h += '<div style="margin-top:8px;font-size:12px;text-align:right"><div>Subtotal: $'+(active.subtotal||0).toFixed(2)+'</div><div>Tax: $'+(active.tax||0).toFixed(2)+'</div><div><strong>Total: $'+(active.total||0).toFixed(2)+'</strong></div></div>';
+    if (expired) h += '<div style="margin-top:8px;font-size:12px;color:var(--red)">This quote is expired (set a new expiration date to re-enable).</div>';
     h += '<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">' +
         '<div class="form-row"><div class="form-group"><label class="form-label">Line Item</label><input type="text" class="form-input" id="qi-name" placeholder="Labor, packing, truck"></div>' +
         '<div class="form-group"><label class="form-label">Qty</label><input type="number" class="form-input" id="qi-qty" value="1" min="1"></div></div>' +
@@ -4093,7 +4482,7 @@ function renderBmgQuote(project){
     h += '<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">' +
         '<div class="form-row"><div class="form-group"><label class="form-label">Signer Name</label><input type="text" class="form-input" id="qi-sign-name" value="'+escapeHtml(active.signedName||'')+'"></div>' +
         '<div class="form-group"><label class="form-label">Signer Email</label><input type="email" class="form-input" id="qi-sign-email" value="'+escapeHtml(active.signedEmail||'')+'"></div></div>' +
-        '<div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-outline" onclick="downloadQuotePdf()">Download PDF</button><button class="btn btn-primary" onclick="signQuote()">Sign Quote</button></div></div>';
+        '<div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap"><button class="btn btn-outline" onclick="downloadQuotePdf()">Download PDF</button><button class="btn btn-primary" '+(expired?'disabled style=\"opacity:0.6;cursor:not-allowed\"':'')+' onclick="signQuote()">Sign Quote</button></div></div>';
     h += '</div>';
     return h;
 }
@@ -8384,7 +8773,11 @@ async function initAuth() {
 }
 
 // Initialize auth on page load
-initAuth();
+if (typeof initQuoteShare === 'function' && initQuoteShare()) {
+    // Public quote-share mode (skip auth + app boot)
+} else {
+    initAuth();
+}
 
     // V39: Populate Project Manager dropdown from people table
     async function loadPMDropdown() {
