@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "dependencies": {
+    "@trigger.dev/sdk": "^4.0.0"
+  }
+}
