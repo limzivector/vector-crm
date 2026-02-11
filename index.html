@@ -5563,7 +5563,7 @@ function loadAutomations() {
     }
 
 function saveAutomations() {
-      localStorage.setItem(getAutomationStorageKey(), JSON.stringify(automations));
+      try { localStorage.setItem(getAutomationStorageKey(), JSON.stringify(automations)); } catch (e) {}
     }
 
 function loadAutomationFolders() {
@@ -5590,7 +5590,7 @@ function loadAutomationFolders() {
     }
 
 function saveAutomationFolders() {
-      localStorage.setItem(getAutomationFolderStorageKey(), JSON.stringify(automationFolders));
+      try { localStorage.setItem(getAutomationFolderStorageKey(), JSON.stringify(automationFolders)); } catch (e) {}
     }
 
 function toggleAutomation(id, checked) {
@@ -5599,6 +5599,7 @@ function toggleAutomation(id, checked) {
     a.status = checked ? 'published' : 'paused';
     a.updatedAt = new Date().toISOString();
     saveAutomations();
+    sbFetch('automations', 'PATCH', `?id=eq.${encodeURIComponent(a.id)}`, { status: a.status, updatedAt: a.updatedAt }).catch(e => console.warn('Supabase toggle failed', e));
     renderAutomations();
 }
 
@@ -5623,6 +5624,8 @@ function createAutomationFolder() {
     if (!automationFolders.includes(name)) {
         automationFolders.push(name);
         saveAutomationFolders();
+        const payload = assignOrgId({ name }, 'automation_folders');
+        sbFetch('automation_folders', 'POST', '', payload, {'Prefer': 'resolution=merge-duplicates'}).catch(e => console.warn('Supabase folder save failed', e));
     }
     renderAutomations();
 }
@@ -5682,7 +5685,7 @@ function toggleAutomationAI(enabled) {
 
 function saveAutomation() {
     loadAutomations();
-    const payload = {
+    const payload = assignOrgId({
         id: editingAutomationId || ('auto-' + Date.now()),
         name: document.getElementById('auto-name').value.trim() || 'Untitled',
         folder: document.getElementById('auto-folder').value.trim() || 'Operations',
@@ -5697,7 +5700,7 @@ function saveAutomation() {
         aiEnabled: !!document.getElementById('auto-ai-enabled').checked,
         aiPrompt: document.getElementById('auto-ai-prompt').value.trim(),
         updatedAt: new Date().toISOString()
-    };
+    }, 'automations');
     if (!automationFolders.includes(payload.folder)) {
         automationFolders.push(payload.folder);
         saveAutomationFolders();
@@ -5717,6 +5720,7 @@ function deleteAutomation(id) {
     if (!confirm('Delete this workflow?')) return;
     automations = automations.filter(a => a.id !== id);
     saveAutomations();
+    sbFetch('automations', 'DELETE', `?id=eq.${encodeURIComponent(id)}`).catch(e => console.warn('Supabase delete failed', e));
     renderAutomations();
 }
 
