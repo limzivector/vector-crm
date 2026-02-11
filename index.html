@@ -7284,6 +7284,135 @@ function renderIntegrations() {
     el.innerHTML = '<div class="settings-card"><div class="settings-card-header"><h3>Microsoft Outlook Calendar</h3><span class="badge '+(isConnected?'badge-connected':'badge-disconnected')+'">'+(isConnected?'Connected':'Not Connected')+'</span></div><div class="integration-card"><div class="integration-icon" style="background:#0078d4;color:#fff">\u{1F4C5}</div><div class="integration-info"><p>Sync your Outlook calendar to see upcoming installs, deliveries, and team schedules directly in Vector CRM.</p>'+(isConnected?'<div style="display:flex;gap:8px;align-items:center"><button class="btn btn-outline" onclick="syncOutlookCalendar()">\u{1F504} Sync Now</button><button class="btn btn-outline" style="color:var(--red);border-color:var(--red)" onclick="disconnectOutlook()">Disconnect</button></div>':'<button class="btn btn-primary" onclick="initiateOutlookAuth()">Connect Outlook</button><span style="font-size:11px;color:var(--muted);margin-left:8px">Requires Microsoft 365 account</span>')+outlookSettings+'</div></div></div><div class="settings-card"><div class="settings-card-header"><h3>Camera Upload</h3><span class="badge '+(cameraOn?'badge-connected':'badge-disconnected')+'">'+(cameraOn?'Active':'Inactive')+'</span></div><div class="integration-card"><div class="integration-icon" style="background:var(--green);color:#fff">\u{1F4F8}</div><div class="integration-info"><p>Enable camera photo capture for receiving, punchlist documentation, and project completion photos.</p><label class="toggle-switch"><input type="checkbox" '+(cameraOn?'checked':'')+' onchange="toggleCameraIntegration(this.checked)"><span class="toggle-slider"></span></label></div></div></div><div class="settings-card"><div class="settings-card-header"><h3>Supabase Database</h3><span class="badge badge-connected">Connected</span></div><div class="integration-card"><div class="integration-icon" style="background:#3ecf8e;color:#fff">\u{1F5C4}\u{FE0F}</div><div class="integration-info"><p>Cloud database powering Vector CRM. All data syncs in real-time.</p><span style="font-size:12px;color:var(--muted)">8 active tables</span></div></div></div>';
 }
 
+// ============ GoHighLevel Integration ============
+function renderGhlCard() {
+  var intSection = document.getElementById('settings-integrations');
+  if (!intSection || document.getElementById('ghl-integration-card')) return;
+  var ghlCard = document.createElement('div');
+  ghlCard.className = 'settings-card';
+  ghlCard.id = 'ghl-integration-card';
+  ghlCard.innerHTML = '<div class="settings-card-header"><h3>GoHighLevel (GHL)</h3><span class="badge" id="ghl-status-badge" style="background:#e8e8e8;color:#666">Checking...</span></div>' +
+    '<div class="integration-card"><div class="integration-icon" style="background:#ff6b35;color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:10px">G</div>' +
+    '<div class="integration-info"><p>Sync automations, contacts, pipelines, and opportunities from GoHighLevel into Vector CRM.</p>' +
+    '<div id="ghl-config-section" style="margin-top:8px">' +
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><label style="font-size:12px;color:#666;min-width:80px">API Key:</label>' +
+    '<input type="password" id="ghl-api-key-input" placeholder="Enter GHL Location API Key" style="flex:1;padding:6px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px" />' +
+    '<button class="btn btn-primary" onclick="saveGhlApiKey()" style="padding:4px 12px;font-size:12px">Save</button></div>' +
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><label style="font-size:12px;color:#666;min-width:80px">Location:</label>' +
+    '<span id="ghl-location-id" style="font-size:12px;color:#999">Loading...</span></div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">' +
+    '<button class="btn" onclick="testGhlConnection()" id="ghl-test-btn" style="padding:4px 12px;font-size:12px;background:#f0f0f0;border:1px solid #ddd;border-radius:6px;cursor:pointer">Test Connection</button>' +
+    '<button class="btn" onclick="syncGhl(\x27workflows\x27)" style="padding:4px 12px;font-size:12px;background:#f0f0f0;border:1px solid #ddd;border-radius:6px;cursor:pointer">Sync Workflows</button>' +
+    '<button class="btn" onclick="syncGhl(\x27contacts\x27)" style="padding:4px 12px;font-size:12px;background:#f0f0f0;border:1px solid #ddd;border-radius:6px;cursor:pointer">Sync Contacts</button>' +
+    '<button class="btn" onclick="syncGhl(\x27pipelines\x27)" style="padding:4px 12px;font-size:12px;background:#f0f0f0;border:1px solid #ddd;border-radius:6px;cursor:pointer">Sync Pipelines</button>' +
+    '<button class="btn" onclick="syncGhl(\x27opportunities\x27)" style="padding:4px 12px;font-size:12px;background:#f0f0f0;border:1px solid #ddd;border-radius:6px;cursor:pointer">Sync Opportunities</button></div>' +
+    '<div id="ghl-sync-status" style="font-size:12px;color:#666"></div>' +
+    '<div id="ghl-last-sync" style="font-size:11px;color:#999;margin-top:4px"></div></div></div></div>';
+  intSection.appendChild(ghlCard);
+  loadGhlConfig();
+}
+
+async function loadGhlConfig() {
+  var orgId = getActiveOrgId();
+  if (!orgId) return;
+  try {
+    var configs = await sbFetch('ghl_config', 'GET', '?org_id=eq.' + encodeURIComponent(orgId));
+    var cfg = (configs || [])[0];
+    var badge = document.getElementById('ghl-status-badge');
+    var locSpan = document.getElementById('ghl-location-id');
+    var apiInput = document.getElementById('ghl-api-key-input');
+    if (!badge) return;
+    if (cfg) {
+      locSpan.textContent = cfg.ghl_location_id || 'Not set';
+      if (cfg.ghl_api_key) {
+        badge.textContent = 'Configured';
+        badge.style.background = '#e6f9e6';
+        badge.style.color = '#2d7d2d';
+        apiInput.placeholder = 'Key saved (enter new to replace)';
+      } else {
+        badge.textContent = 'Key Needed';
+        badge.style.background = '#fff4e5';
+        badge.style.color = '#b36b00';
+      }
+      if (cfg.last_sync_at) {
+        var lsEl = document.getElementById('ghl-last-sync');
+        if (lsEl) lsEl.textContent = 'Last sync: ' + new Date(cfg.last_sync_at).toLocaleString();
+      }
+    } else {
+      badge.textContent = 'Not Configured';
+      badge.style.background = '#fee';
+      badge.style.color = '#c00';
+      locSpan.textContent = 'No config for this org';
+    }
+  } catch(e) { console.error('loadGhlConfig:', e); }
+}
+
+async function saveGhlApiKey() {
+  var orgId = getActiveOrgId();
+  var input = document.getElementById('ghl-api-key-input');
+  var key = input.value.trim();
+  if (!key) { alert('Please enter a GHL API key'); return; }
+  try {
+    await sbFetch('ghl_config', 'PATCH', '?org_id=eq.' + encodeURIComponent(orgId), { ghl_api_key: key });
+    input.value = '';
+    loadGhlConfig();
+    alert('GHL API key saved!');
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function testGhlConnection() {
+  var orgId = getActiveOrgId();
+  var btn = document.getElementById('ghl-test-btn');
+  var statusDiv = document.getElementById('ghl-sync-status');
+  btn.textContent = 'Testing...';
+  btn.disabled = true;
+  try {
+    var configs = await sbFetch('ghl_config', 'GET', '?org_id=eq.' + encodeURIComponent(orgId));
+    var cfg = (configs || [])[0];
+    if (!cfg || !cfg.ghl_location_id) { statusDiv.innerHTML = '<span style="color:red">No GHL config found</span>'; btn.textContent = 'Test Connection'; btn.disabled = false; return; }
+    var resp = await fetch('/api/ghl-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ org_id: orgId, endpoint: 'locations/' + cfg.ghl_location_id, method: 'GET' })
+    });
+    var data = await resp.json();
+    if (resp.ok && data.id) {
+      statusDiv.innerHTML = '<span style="color:green">Connected! Location: ' + (data.name || data.id) + '</span>';
+      var badge = document.getElementById('ghl-status-badge');
+      if (badge) { badge.textContent = 'Connected'; badge.style.background = '#e6f9e6'; badge.style.color = '#2d7d2d'; }
+    } else {
+      statusDiv.innerHTML = '<span style="color:red">Failed: ' + (data.error || 'Unknown error') + '</span>';
+    }
+  } catch(e) { statusDiv.innerHTML = '<span style="color:red">' + e.message + '</span>'; }
+  btn.textContent = 'Test Connection';
+  btn.disabled = false;
+}
+
+async function syncGhl(syncType) {
+  var orgId = getActiveOrgId();
+  var statusDiv = document.getElementById('ghl-sync-status');
+  statusDiv.innerHTML = '<span style="color:var(--blue)">Syncing ' + syncType + '...</span>';
+  try {
+    var resp = await fetch('/api/ghl-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ org_id: orgId, sync_type: syncType })
+    });
+    var data = await resp.json();
+    if (resp.ok && data.success) {
+      statusDiv.innerHTML = '<span style="color:green">Synced ' + data.records_synced + ' ' + syncType + '!</span>';
+      loadGhlConfig();
+    } else {
+      statusDiv.innerHTML = '<span style="color:red">Failed: ' + (data.error || 'Unknown') + '</span>';
+    }
+  } catch(e) { statusDiv.innerHTML = '<span style="color:red">' + e.message + '</span>'; }
+}
+
+// Patch renderIntegrations to also render GHL card
+var _origRenderIntegrations = renderIntegrations;
+renderIntegrations = function() { _origRenderIntegrations(); renderGhlCard(); };
+// ============ End GHL Integration ============
+
 
 function generateCodeVerifier() {
     const arr = new Uint8Array(32);
