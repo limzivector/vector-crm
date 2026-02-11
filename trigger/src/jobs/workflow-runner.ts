@@ -1,4 +1,4 @@
-import { task, wait, logger } from "@trigger.dev/sdk/v3";
+import { task, wait, logger } from "@trigger.dev/sdk";
 import {
   getSupabase,
   loadWorkflowSteps,
