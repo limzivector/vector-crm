@@ -14,7 +14,7 @@ export function getSupabase(): SupabaseClient {
 }
 
 // ------------------------------------------------------------------
-// Event types that the CRM emits → Trigger.dev consumes
+// Event types that the CRM emits â Trigger.dev consumes
 // ------------------------------------------------------------------
 export type CrmEventType =
   | "lead.created"
@@ -29,7 +29,7 @@ export type CrmEventType =
 
 export interface CrmEvent {
   id?: number;
-  org_id: number;
+  org_id: string;
   event_type: CrmEventType;
   entity_type: string; // "project", "quote", "contact", etc.
   entity_id: number | string;
@@ -71,7 +71,7 @@ export async function loadWorkflowSteps(automationId: string) {
 }
 
 // Load published automations that match a given trigger type + org
-export async function loadMatchingAutomations(orgId: number, triggerType: string, triggerValue?: string) {
+export async function loadMatchingAutomations(orgId: string, triggerType: string, triggerValue?: string) {
   const sb = getSupabase();
   let query = sb
     .from("automations")
@@ -91,7 +91,7 @@ export async function loadMatchingAutomations(orgId: number, triggerType: string
 
 // Log a workflow run
 export async function createWorkflowRun(params: {
-  org_id: number;
+  org_id: string;
   automation_id: string;
   event_id: number;
   status: string;
