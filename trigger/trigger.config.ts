@@ -1,4 +1,4 @@
-// Trigger.dev Cloud – V.O.S. Inc. CRM workflow engine
+// Trigger.dev Cloud – V.O.S. Inc. CRM workflow engine (v4)
 import { defineConfig } from "@trigger.dev/sdk";
 
 export default defineConfig({
