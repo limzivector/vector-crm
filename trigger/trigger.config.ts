@@ -1,7 +1,7 @@
 import { defineConfig } from "@trigger.dev/sdk/v3";
 
 export default defineConfig({
-  project: "vector-crm", // Replace with your actual Trigger.dev project ref after signup
+  project: "proj_jzideboaecnowkivvzxx",
   runtime: "node",
   logLevel: "log",
   retries: {
