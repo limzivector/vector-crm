@@ -1,5 +1,5 @@
 // Trigger.dev Cloud – V.O.S. Inc. CRM workflow engine
-import { defineConfig } from "@trigger.dev/sdk/v3";
+import { defineConfig } from "@trigger.dev/sdk";
 
 export default defineConfig({
   project: "proj_jzideboaecnowkivvzxx",
