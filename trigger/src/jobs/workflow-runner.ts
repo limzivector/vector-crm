@@ -15,7 +15,7 @@ import { sendSms, getMessagingServiceForOrg } from "../lib/twilio.js";
 // ------------------------------------------------------------------
 interface WorkflowEventPayload {
   eventId: number;
-  orgId: number;
+  orgId: string;
   orgSlug: string;
   eventType: CrmEventType;
   entityType: string;
@@ -24,7 +24,7 @@ interface WorkflowEventPayload {
 }
 
 // ------------------------------------------------------------------
-// MAIN: Process a CRM event → find matching automations → run them
+// MAIN: Process a CRM event â find matching automations â run them
 // ------------------------------------------------------------------
 export const processEvent = task({
   id: "process-crm-event",
@@ -109,7 +109,7 @@ interface RunAutomationParams {
   automationId: string;
   automationName: string;
   eventId: number;
-  orgId: number;
+  orgId: string;
   orgSlug: string;
   eventType: CrmEventType;
   entityType: string;
@@ -174,7 +174,7 @@ export const runAutomation = task({
 
         switch (stepType) {
           case "Trigger":
-            // Trigger steps are entry points — no action needed during execution
+            // Trigger steps are entry points â no action needed during execution
             result = { skipped: true, reason: "trigger step" };
             break;
 
@@ -434,7 +434,7 @@ function evaluateCondition(
 }
 
 // ------------------------------------------------------------------
-// Template interpolation: "Hello {{contactName}}" → "Hello John"
+// Template interpolation: "Hello {{contactName}}" â "Hello John"
 // ------------------------------------------------------------------
 function interpolate(template: string, context: Record<string, unknown>): string {
   return template.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_, path) => {
