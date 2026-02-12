@@ -7373,11 +7373,11 @@ async function testGhlConnection() {
     var resp = await fetch('/api/ghl-proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ org_id: orgId, endpoint: 'locations/' + cfg.ghl_location_id, method: 'GET' })
+      body: JSON.stringify({ org_id: orgId, endpoint: 'pipelines/', method: 'GET' })
     });
     var data = await resp.json();
-    if (resp.ok && data.id) {
-      statusDiv.innerHTML = '<span style="color:green">Connected! Location: ' + (data.name || data.id) + '</span>';
+    if (resp.ok && data.pipelines) {
+      statusDiv.innerHTML = '<span style="color:green">Connected! Location: ' + (data.pipelines.length + ' pipeline(s)' || data.id) + '</span>';
       var badge = document.getElementById('ghl-status-badge');
       if (badge) { badge.textContent = 'Connected'; badge.style.background = '#e6f9e6'; badge.style.color = '#2d7d2d'; }
     } else {
