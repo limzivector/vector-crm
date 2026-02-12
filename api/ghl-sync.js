@@ -3,7 +3,7 @@
 // Supports: workflows, contacts, pipelines, opportunities, custom_fields
 
 const DEFAULT_SUPABASE_URL = "https://ilbrtyoeqrbkbbotoopu.supabase.co";
-const GHL_BASE = "https://services.leadconnectorhq.com";
+const GHL_BASE = "https://rest.gohighlevel.com/v1";
 
 async function sbRest({ supabaseUrl, serviceKey, path, method, body, headers }) {
   const url = `${supabaseUrl}${path}`;
@@ -119,7 +119,7 @@ export default async function handler(req, res) {
 // --- Sync: Workflows ---
 async function syncWorkflows(supabaseUrl, serviceKey, config, org_id) {
   const data = await ghlFetch(config.ghl_api_key, config.api_version,
-    `workflows/?locationId=${config.ghl_location_id}`);
+    'workflows/');
   const workflows = data.workflows || [];
   let count = 0;
   for (const wf of workflows) {
@@ -155,7 +155,7 @@ async function syncWorkflows(supabaseUrl, serviceKey, config, org_id) {
 async function syncContacts(supabaseUrl, serviceKey, config, org_id) {
   let count = 0, hasMore = true, afterId = null;
   while (hasMore) {
-    let ep = `contacts/?locationId=${config.ghl_location_id}&limit=100`;
+    let ep = 'contacts/?limit=100';
     if (afterId) ep += `&startAfterId=${afterId}`;
     const data = await ghlFetch(config.ghl_api_key, config.api_version, ep);
     const contacts = data.contacts || [];
@@ -174,7 +174,7 @@ async function syncContacts(supabaseUrl, serviceKey, config, org_id) {
 // --- Sync: Pipelines ---
 async function syncPipelines(supabaseUrl, serviceKey, config, org_id) {
   const data = await ghlFetch(config.ghl_api_key, config.api_version,
-    `opportunities/pipelines?locationId=${config.ghl_location_id}`);
+    'pipelines/');
   let count = 0;
   for (const p of (data.pipelines || [])) {
     await sbRest({ supabaseUrl, serviceKey, path: "/rest/v1/ghl_entity_map", method: "POST",
@@ -190,12 +190,12 @@ async function syncPipelines(supabaseUrl, serviceKey, config, org_id) {
 async function syncOpportunities(supabaseUrl, serviceKey, config, org_id) {
   let count = 0;
   const pData = await ghlFetch(config.ghl_api_key, config.api_version,
-    `opportunities/pipelines?locationId=${config.ghl_location_id}`);
+    'pipelines/');
   for (const pipeline of (pData.pipelines || [])) {
     let page = 1, hasMore = true;
     while (hasMore) {
       const data = await ghlFetch(config.ghl_api_key, config.api_version,
-        `opportunities/search?location_id=${config.ghl_location_id}&pipeline_id=${pipeline.id}&page=${page}&limit=100`);
+        `pipelines/${pipeline.id}/opportunities`);
       const opps = data.opportunities || [];
       for (const o of opps) {
         await sbRest({ supabaseUrl, serviceKey, path: "/rest/v1/ghl_entity_map", method: "POST",
@@ -214,7 +214,7 @@ async function syncOpportunities(supabaseUrl, serviceKey, config, org_id) {
 // --- Sync: Custom Fields ---
 async function syncCustomFields(supabaseUrl, serviceKey, config, org_id) {
   const data = await ghlFetch(config.ghl_api_key, config.api_version,
-    `locations/${config.ghl_location_id}/customFields`);
+    'custom-fields/');
   let count = 0;
   for (const f of (data.customFields || [])) {
     await sbRest({ supabaseUrl, serviceKey, path: "/rest/v1/ghl_entity_map", method: "POST",
