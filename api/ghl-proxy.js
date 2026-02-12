@@ -1,9 +1,9 @@
 // API route: POST /api/ghl-proxy
-// Proxies requests to GoHighLevel API v2 with per-org auth.
+// Proxies requests to GoHighLevel API v1 with per-org auth.
 // Reads ghl_config from Supabase to get the API key for the requesting org.
 
 const DEFAULT_SUPABASE_URL = "https://ilbrtyoeqrbkbbotoopu.supabase.co";
-const GHL_BASE = "https://services.leadconnectorhq.com";
+const GHL_BASE = "https://rest.gohighlevel.com/v1";
 
 async function sbRest({ supabaseUrl, serviceKey, path, method, body, headers }) {
   const url = `${supabaseUrl}${path}`;
